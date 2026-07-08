@@ -56,7 +56,7 @@ The three-tier registry model applies to all UDLM artifact types, not just resou
 - `organization/provider` — authored by registered Service Providers; scoped to their resource types
 - `organization/tenant` — authored by Consumer/Tenant actors; scoped to their Tenant
 
-This means a tenant-authored Gating policy is Organization/Tenant tier — it has lower inherent trust than a platform-authored policy at the same domain level, and may require additional review per the active profile. See [Federated Contribution Model](federated-contribution-model.md).
+This means a tenant-authored Validation policy is Organization/Tenant tier — it has lower inherent trust than a platform-authored policy at the same domain level, and may require additional review per the active profile. See [Federated Contribution Model](federated-contribution-model.md).
 
 ### 2.2 The Federated Registry Model
 
@@ -96,6 +96,13 @@ The submitter becomes the **Resource Type Authority** for the submitted specific
 > The authority is the required approver for all future version changes — no new version
 > activates without their approval. Authority can be transferred via a formal transfer.
 > This is the same `owned_by` governance model applied to all UDLM artifacts.
+
+> **`developing` / `proposed` here are review-WORKFLOW stages, not the spec's `status` field.** They
+> describe an artifact's journey *into* the registry (draft → under review → accepted). The meta-schema
+> `status` enum (`active | deprecated | retired`, `registry/resource-type-spec.schema.json`) is the
+> separate *published-lifecycle* axis, and maturity is the *version* (`0.x` → `1.0`) — see VERSIONING.md
+> "Lifecycle vs. maturity". A spec only enters the validated registry once accepted, at which point it
+> is `status: active`. Don't conflate the workflow stage with `status`.
 
 ```
 1. Author creates Resource Type Specification draft
@@ -285,7 +292,8 @@ Organizations use standard policy priority to customize deprecation behavior:
 policy:
   domain: platform
   priority: 600.0.0
-  type: gating
+  type: validation
+  enforcement_class: compliance
   rule: >
     If registry.deprecation.tier == tier_2
     THEN override: sunset_period = P12M
