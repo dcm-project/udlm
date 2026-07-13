@@ -8,7 +8,7 @@
   "scope": "architecture",
   "rationale": "Full provenance requires recording not only what each field's value became and which layer it came from (already in `provenance`), but also what was OFFERED and NOT applied, and why (the 'road not taken': overridden/narrowed/stripped/blocked contributions). That assembly record is control-plane information — it must NOT go to the provider, and must not persist into the realized state. Generalizing: what a provider actually needs is EXECUTION data only, and that set should be formalized apart from the raw domain schema. The clean primitive is a data ROLE — a purpose axis orthogonal to data_classification (sensitivity). data_classification already answers 'who may see it'; data_role answers 'what is it for', and governs dispatch: only role:execution crosses to a provider by default. This reuses existing machinery end-to-end — data_classification is already field-level and already a policy match source, and the Governance Matrix already fires on every DCM->Provider interaction with STRIP_FIELD/DENY/REDACT — so role dispatch is a match source, not new policy. Providers opt into non-execution roles via accepts_roles, and may tag data they return by role; sovereignty/profile policy can strip a requested role but never widen beyond accepts_roles. `unapplied`/`assembly` becomes one occupant of role:assembly rather than a special case.",
   "question_refs": [
-    "Chris 2026-07-07: Requested store must track which data came from which layer AND what was not applied and why; execution-only to provider; provider may tag data assembly-only; providers state which data they want + policy validate/control"
+    "Maintainer 2026-07-07: Requested store must track which data came from which layer AND what was not applied and why; execution-only to provider; provider may tag data assembly-only; providers state which data they want + policy validate/control"
   ],
   "options_considered": [
     {
@@ -50,7 +50,7 @@
   ],
   "state": "PROPOSED",
   "provenance": {
-    "proposed_by": "chris",
+    "proposed_by": "maintainer",
     "model_version": "claude-opus-4-8",
     "at": "2026-07-07T00:00:00Z"
   },
