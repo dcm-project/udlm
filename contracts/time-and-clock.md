@@ -158,6 +158,14 @@ Traceability to UTC (NIST / BIPM) is required in every profile; only the bound a
 mechanism vary. Because ordering is structural (§4), sync accuracy governs
 **correlation and admission**, never order-correctness.
 
+> **Why federation is record-and-flag, not reject (§6.4).** A federated peer is a separate
+> administrative domain under its own clock discipline — a receiving peer can neither enforce nor
+> assume it. Rejecting a federated artifact on skew would let one peer's clock veto another peer's
+> data. So for peer-supplied timestamps received *in federation* the receiver accepts the value as-is,
+> records an audit event marking it cross-boundary (flagged for sync investigation), and lets ordering
+> fall back to the structural mechanism (§4, hash-linked sequence + UUIDv7), which never depended on
+> clock agreement. The skew bound stays a within-DCM admission rule, not a cross-federation one.
+
 ---
 
 ## 7. Provider timestamp validation
