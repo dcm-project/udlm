@@ -201,7 +201,7 @@ Some resources combine both patterns. A Subnet Pool is an allocatable pool. Each
 NetworkOps Tenant owns: SupernetPool 10.0.0.0/8 (allocatable pool)
   │
   ├── NetworkOps Tenant owns: 10.0.0.0/16 (allocation from /8 — NetworkOps-owned)
-  │     NetworkOps Tenant owns: 10.0.0.0/24 (allocation from /16 — NetworkOps-owned)
+  │     NetworkOps Tenant owns: 192.0.2.0/24 (allocation from /16 — NetworkOps-owned)
   │
   └── NetworkOps Tenant owns: 10.1.0.0/16 (allocation from /8 — NetworkOps-owned, shared)
         ├── AppTeam Tenant owns: 10.1.0.0/24  ← consumer allocation (owned by AppTeam)
