@@ -23,7 +23,7 @@
 > declare → select → attest pattern the Placement Engine uses for any resource. A request **declares** what it
 > needs (credential type, scope, assurance); each candidate provider **declares** what it can issue and to what
 > assurance level (its credential capability); the realization **selects** the provider that meets the profile's
-> trust floor. This is the credential expression of the DCM Trust Model (DCM `ADR-022`): DCM is a trust **broker**,
+> trust floor. This is the credential expression of the DCM Trust Model (DCM `DCM ADR-022`): DCM is a trust **broker**,
 > not a credential authority. See the DCM trust documents for the cross-plane model; this document specifies the
 > UDLM substrate contract — the data model, lifecycle, and provider interface — that the brokering rests on.
 >
@@ -68,7 +68,7 @@ provider:
     supported_algorithms: [rsa-2048, rsa-4096, ecdsa-p256, ecdsa-p384, ed25519]
 ```
 
-The realization **selects** among providers declaring the needed `Credential.*` type by matching `credential_capability.max_assurance` and `attestation.level` against the profile's required floor (a `sovereign` profile may demand `hardware_attested` + `fips_140_level: 3`), then scoring on the usual placement signals. A provider whose declared (and verified) attestation does not meet the floor is filtered out before selection — a *claim* of capability is not *trust* in it (see DCM `ADR-022`, attestation ladder).
+The realization **selects** among providers declaring the needed `Credential.*` type by matching `credential_capability.max_assurance` and `attestation.level` against the profile's required floor (a `sovereign` profile may demand `hardware_attested` + `fips_140_level: 3`), then scoring on the usual placement signals. A provider whose declared (and verified) attestation does not meet the floor is filtered out before selection — a *claim* of capability is not *trust* in it (see DCM `DCM ADR-022`, attestation ladder).
 
 ---
 
@@ -83,6 +83,7 @@ The realization **selects** among providers declaring the needed `Credential.*` 
 | `ssh_key` | `Credential.SSHKey` | SSH access to realized infrastructure | P30D–P90D (configurable) | Scheduled or on-demand |
 | `secret` | `Credential.Secret` | Arbitrary secret value (password, connection string) | Per type defaults | Scheduled or on-demand |
 | `signing_key` | `Credential.SigningKey` | Cryptographic key for signing operations | Per algorithm defaults | Pre-expiry |
+| `encryption_key` | `Credential.EncryptionKey` | Data-at-rest encryption — per-tenant DEK wrapped by a KEK (envelope encryption); the addressable key a Tenant's `key_bindings` reference and the **crypto-shredding** primitive (destroy the KEK → tenant data unrecoverable; `dcm-group.schema.json` `key_bindings`, GRP-013) | Per algorithm defaults | Pre-expiry, on rotation, or on tenant offboarding |
 | `service_account_token` | — | Workload identity for automated processes | PT1H–PT24H | Automatic; pre-expiry |
 | `database_password` | — | Access credential for realized database resources | PT24H–P7D (configurable) | Scheduled or on-demand |
 | `kubeconfig` | — | Access to realized Kubernetes clusters | PT8H–P30D (configurable) | Scheduled or on-demand |
@@ -251,7 +252,7 @@ Bootstrap anchor present (out-of-band; single-purpose; short TTL)
   │   From here, ALL credentials flow through registered Credential Providers
 ```
 
-After the handoff the bootstrap path is closed; there is no standing bootstrap credential. The bootstrap anchor is itself a `trust anchor` in the DCM Trust Model sense (DCM `ADR-022`); its `anchor_type` is selected by profile (homelab may use a TOFU/self-asserted anchor, sovereign demands a hardware-attested one).
+After the handoff the bootstrap path is closed; there is no standing bootstrap credential. The bootstrap anchor is itself a `trust anchor` in the DCM Trust Model sense (DCM `DCM ADR-022`); its `anchor_type` is selected by profile (homelab may use a TOFU/self-asserted anchor, sovereign demands a hardware-attested one).
 
 ---
 
