@@ -53,7 +53,7 @@ not) · `RETIRED` (was adopted, withdrawn) · `REJECTED` (evaluated, not adopted
 ## Relationship & graph semantics (common-elements §9)
 
 ### OASIS TOSCA (relationship types) — CANONICAL
-**Covers:** `OASIS TOSCA` · **Body:** OASIS · **Since:** 2026-07-06T01:05:46Z · **Where:** relation names `connects_to` (ConnectsTo), `attaches_to` (AttachesTo); the four edge `kind`s are retroactively aligned with TOSCA root relationship types (DependsOn/HostedOn/BindsTo); REL-003 is TOSCA's derivation rule.
+**Covers:** `OASIS TOSCA` · **Body:** OASIS · **Since:** 2026-07-06T01:05:46Z · **Where:** relation names `connects_to` (ConnectsTo), `attaches_to` (AttachesTo); the four edge `kind`s are retroactively aligned with TOSCA root relationship types (DependsOn/HostedOn/BindsTo); REL-003 is TOSCA's derivation rule; composition/relationship templates (Software.Service).
 **Why:** the only standards-body vocabulary designed for infrastructure topology relationships, with an extension model (derive from root types) matching our augment-don't-fork rule. *Alternatives:* IANA link relations (REJECTED below), DMTF CIM associations (authoritative but aging; Redfish is its living profile — PRIOR-ART), invention (rejected on principle). **License:** OASIS — compatible-reference.
 
 ### RFC 8288 (Web Linking) — PATTERN
@@ -66,7 +66,7 @@ not) · `RETIRED` (was adopted, withdrawn) · `REJECTED` (evaluated, not adopted
 ## Hardware & platform
 
 ### DMTF Redfish — CANONICAL
-**Covers:** `Redfish` · **Body:** DMTF · **Since:** 2026-06-26T22:30:12Z · **Where:** 8+ Hardware/Compute/Network/Facility types (ComputerSystem, Processor, Memory, Drive, NetworkAdapter, Switch, Circuit).
+**Covers:** `Redfish` · **Body:** DMTF · **Since:** 2026-06-26T22:30:12Z · **Where:** 8+ Hardware/Compute/Network/Facility types (ComputerSystem, Processor, Memory, Drive, NetworkAdapter, Switch, Circuit); Bios + BiosAttributeRegistry (Hardware.BiosProfile); Manager + ComputerSystem.Reset (Hardware.BMC); PowerSupply (Hardware.PowerSupply); Location/Placement (Facility.Location).
 **Why:** the vendor-neutral hardware-as-asset vocabulary, and the one the estate's producers actually speak (Redfish-capable BMCs; used for bare-metal provisioning). *Alternatives:* IPMI (no data model), DMTF CIM (superseded by Redfish for REST-era use — PRIOR-ART). **License:** DMTF — compatible-reference.
 
 ### IEEE 802.1AX / 802.1Q / 802.1AB — CANONICAL
@@ -78,8 +78,12 @@ not) · `RETIRED` (was adopted, withdrawn) · `REJECTED` (evaluated, not adopted
 **Why:** interface stacking and overlay/underlay topology are *already standardized* by the IETF network-management models; adopting their names makes our records legible to anyone who knows YANG. *Alternatives:* invention (rejected). **License:** IETF Trust — compatible-reference.
 
 ### SNIA Swordfish — CANONICAL
-**Covers:** `SNIA-Swordfish` · **Body:** SNIA · **Since:** 2026-06-27T00:11:51Z · **Where:** Storage.Cluster (StorageSystem), Hardware.StorageDevice.
+**Covers:** `SNIA-Swordfish` · **Body:** SNIA · **Since:** 2026-06-27T00:11:51Z · **Where:** Storage.Cluster (StorageSystem), Hardware.StorageDevice, Storage.Pool (StoragePool alignment).
 **Why:** the storage-domain extension of Redfish — same family as our hardware vocabulary. **License:** SNIA — compatible-reference.
+
+### OpenZFS — CANONICAL
+**Covers:** `OpenZFS` · **Body:** OpenZFS project · **Since:** 2026-07-13 · **Where:** Storage.Pool (zpool/vdev topology, redundancy), Storage.Dataset (dataset/zvol, mountpoint, hierarchy, properties).
+**Why:** the host-local pool/dataset layer between physical drives (Hardware.StorageDevice/Redfish Drive) and cluster-provisioned volumes (Storage.Volume/Swordfish) had no vocabulary; OpenZFS is the one the producers actually speak (`zpool`/`zfs` on the fleet's storage hosts) and the de-facto standard for the pool→vdev→dataset shape. *Alternatives:* model a pool as Storage.Cluster (wrong — "cluster" is multi-node/distributed; a zpool is single-host) and a dataset as Storage.Volume (wrong — a Volume is a cluster-provisioned PVC/CSI claim, not a host-local hierarchy-bearing filesystem); both rejected as semantic overloads. Swordfish StoragePool aligns the capacity/redundancy fields (§storage family). **License:** CDDL-1.0 — compatible-reference (vocabulary referenced, no code).
 
 ## Kubernetes / CNCF ecosystem
 
@@ -123,6 +127,26 @@ not) · `RETIRED` (was adopted, withdrawn) · `REJECTED` (evaluated, not adopted
 ### libvirt — CANONICAL
 **Covers:** `libvirt virtual network` · **Since:** 2026-07-05T02:10:32Z · **Where:** Network.VirtualNetwork (forward-mode vocabulary).
 **Why:** the host-bridge attachment producer on all four virt hosts. **License:** LGPL — reference-only.
+
+## Compute — Container
+
+### OCI Image Specification — CANONICAL
+**Covers:** `OCI Image Specification` · **Body:** Open Container Initiative · **Since:** 2026-07-11T00:00:00Z · **Where:** `Compute.Container` image reference (`image.reference` + content-addressable digest).
+**Why:** the vendor-neutral image-reference + digest vocabulary; adopting it keeps container image identity portable across any OCI runtime. *Alternatives:* Docker legacy image refs (subsumed by OCI). **License:** Apache-2.0 — compatible-reference.
+
+### Open Application Model — CANONICAL
+**Covers:** `Open Application Model` · **Body:** OAM (CNCF lineage) · **Since:** 2026-07-11T00:00:00Z · **Where:** `Compute.Container` infra-neutral workload shape (image, resources, env, ports).
+**Why:** an infrastructure-neutral component/workload model matching UDLM's portable-intent goal — the shape is provider-agnostic and the provider naturalizes it. *Alternatives:* raw K8s PodSpec (runtime-coupled; used only as the field vocabulary below). **License:** MIT — compatible-reference.
+
+### Kubernetes Container (core/v1) — PATTERN
+**Covers:** `Kubernetes Container (core/v1)` · **Body:** Kubernetes (CNCF) · **Since:** 2026-07-11T00:00:00Z · **Where:** `Compute.Container` runtime field vocabulary (command/args, ports, mounts, restart) — naturalized by the provider, not restated in the base.
+**Why:** the de-facto runtime container field vocabulary, absorbed as a naming pattern the provider naturalizes — consumers get familiar fields without coupling the base type to K8s. *Alternatives:* per-provider bespoke runtime fields (fragmenting). **License:** CC-BY-4.0 (docs) — reference-only.
+
+## Storage
+
+### SMB / CIFS — CANONICAL
+**Covers:** `SMB / CIFS` · **Body:** Microsoft (MS-SMB2 open specification) · **Since:** 2026-07-11T00:00:00Z · **Where:** `Storage.FileShare` share + access vocabulary (share name, exported path, access, read-only).
+**Why:** the dominant cross-platform file-share protocol; its share/access vocabulary is what a portable FileShare type must express. *Alternatives:* NFS (modeled alongside via the `protocol` enum). **License:** Microsoft Open Specification Promise — compatible-reference.
 
 ## Cost
 
