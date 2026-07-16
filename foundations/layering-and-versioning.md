@@ -7,7 +7,7 @@
 
 > **Foundation Document Reference**
 >
-> This document is a detailed reference for a specific domain of the DCM architecture.
+> This document is a detailed reference for a specific domain of the UDLM data model.
 > The three foundational abstractions — Data, Provider, and Policy — are defined in
 > [foundations.md](foundations.md). All concepts in this document map to one or
 > more of those three abstractions.
@@ -683,7 +683,7 @@ layer:
   # FIELDS — with per-field override metadata
   fields:
     dns_servers:
-      value: [10.0.0.53, 10.0.0.54]
+      value: [192.0.2.53, 192.0.2.54]
       metadata:
         override: allow             # allow | constrained | immutable
         basis_for_value: "Platform DNS infrastructure — primary and secondary"
@@ -1572,7 +1572,7 @@ Layer fields declare override intent using three values. The Request Payload Pro
 ```yaml
 fields:
   dns_servers:
-    value: [10.0.0.53, 10.0.0.54]
+    value: [192.0.2.53, 192.0.2.54]
     metadata:
       override: allow          # lower layers and consumers may change this
 
