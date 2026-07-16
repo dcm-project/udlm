@@ -1,0 +1,110 @@
+{
+  "$id": "https://udlm.dev/registry/udlm/0.1/Network.Gateway/0.2.1",
+  "conforms_to": "udlm/0.1",
+  "uuid": "541766ad-94b8-40db-8886-c42fd85e8bd1",
+  "resource_type": "Network.Gateway",
+  "version": "0.2.1",
+  "family": "Resource",
+  "entity_type": "Infrastructure Resource",
+  "portability": "portable",
+  "status": "active",
+  "metadata": {
+    "display_name": "Network Gateway",
+    "description": "A network edge gateway \u2014 routing / NAT / firewalling between network segments and to external networks. Grounded in the Kubernetes Gateway API 'Gateway' concept (a network entry/exit point); note UDLM's Network.Gateway is L3/edge (router/NAT/firewall), broader than the Gateway API's L4/L7 service focus. Vendor specifics (pfSense, OPNsense, vendor firewalls) are the provider/extension.",
+    "maintainer": "udlm-registry",
+    "origination_timestamp": "2026-06-27T00:38:59Z"
+  },
+  "spec": {
+    "type": "object",
+    "required": [],
+    "properties": {
+      "functions": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "routing",
+            "nat",
+            "firewall",
+            "vpn",
+            "l7-proxy"
+          ]
+        },
+        "description": "Edge functions this gateway provides."
+      },
+      "segments": {
+        "type": "array",
+        "description": "Network segments the gateway bridges/routes between.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "cidr": {
+              "$ref": "../common-elements.schema.json#/$defs/cidr",
+              "description": "Segment CIDR (canonical common-elements cidr)."
+            },
+            "role": {
+              "type": "string",
+              "description": "Segment role, e.g. wan | lan | dmz | mgmt."
+            },
+            "vlan_ref": {
+              "type": "string",
+              "description": "Reference (handle/uuid) to the Network.VLAN this segment rides \u2014 selected, not invented (foundational-resources). Replaces the inline 802.1Q id (R5)."
+            }
+          }
+        }
+      },
+      "ip_family": {
+        "type": "string",
+        "enum": [
+          "ipv4",
+          "ipv6",
+          "dual"
+        ],
+        "description": "Address families routed (common-elements: ip_family)."
+      }
+    }
+  },
+  "outputs": {
+    "external_address": {
+      "type": "string",
+      "description": "Public/WAN address the gateway presents (NAT egress / ingress) once Realized."
+    }
+  },
+  "relationships": [
+    {
+      "kind": "references",
+      "target": "Network.DHCPScope",
+      "cardinality": "0..n",
+      "description": "Segments the gateway routes may have DHCP scopes served elsewhere."
+    },
+    {
+      "kind": "references",
+      "name": "segment_vlan",
+      "target": "Network.VLAN",
+      "cardinality": "0..n",
+      "description": "segment_vlan \u2014 each segment rides a Network.VLAN, referenced (vlan_ref), not an inline 802.1Q id (R5; foundational-resources selected-not-invented)."
+    }
+  ],
+  "adopts": [
+    {
+      "standard": "Kubernetes-Gateway-API",
+      "version": "1.x",
+      "standard_name": "Gateway",
+      "role": "the portable 'gateway' (network entry/exit point) concept",
+      "source": "https://gateway-api.sigs.k8s.io/",
+      "license": "Apache-2.0",
+      "license_compatibility": "compatible-reference",
+      "disposition": "tier1_value"
+    }
+  ],
+  "aliases": [
+    {
+      "name": "Router",
+      "note": "L3 routing role"
+    },
+    {
+      "name": "Firewall",
+      "note": "edge filtering role"
+    }
+  ]
+}
