@@ -99,6 +99,42 @@ The **Realized State** is the provider-confirmed record of what was actually bui
 
 **Content:** Complete entity state snapshot in UDLM format, with provider-added fields, full field-level provenance including provider attribution, and supersession chain references
 
+### 2.3a Realization is two-phase — validate-and-reserve, then commit
+
+The transition from Requested State to Realized State is **not a single dispatch** — it is **two-phase:
+validate-and-reserve, then commit** ([ADR-011](../docs/adr/ADR-011-validate-and-reserve.md)). What the data
+model fixes is **the guarantee and the artifacts, not the procedure**: nothing is built until the whole
+request is validated and reserved. *How* a realization gets there is DCM runtime (below).
+
+**The contract (data model):**
+- **A reservation is a first-class, TTL'd artifact.** A reserve validates the request against a provider's
+  capacity/identity/policy and **holds** the result, yielding a **`reservation_hold_uuid`** plus the
+  provider's **computed realize-time facts** (a reserved placement's port, a reserved address) — recorded
+  in the Requested-state resolution (`reservation_hold_uuid` in `placement.yaml`,
+  `entities/service-dependencies.md` §11), so the whole reserved graph is **auditable before commit**. A
+  reserve **builds nothing** and writes **no** Realized State.
+- **Reserved facts feed dependents.** A dependency whose criteria derive from a parent's realize-time state
+  (`fulfillment: provider`, ADR-009) is satisfiable from the parent's *reserved* facts — nothing is built
+  to resolve the graph.
+- **Commit is all-or-nothing at a barrier.** Nothing commits until **every** reservation in the effective
+  graph is held-and-valid **and** all applicable policy (placement, governance-matrix, cycle, quota) is
+  green against the **fully reserved** graph. Commit is the only phase that mutates infrastructure and
+  writes Realized State (§2.3).
+- **Release is a hold-drop, not a teardown.** Any held reservation not committed is released — on
+  validation failure, cancellation, or hold-TTL expiry — and because reserve built nothing, there is no
+  orphaned resource to compensate.
+- **No sixth lifecycle state.** `lifecycle_state` stays on its five canonical values; an active hold is a
+  `RESERVATION_HELD` **`status.conditions`** overlay (§2.5), not a state.
+
+**The mechanism (realization / DCM).** *How* a realization reaches a consistent set of holds — the
+reserve→recompute-dependents **reconciliation loop**, its multi-round negotiation and iteration to a fixed
+point, the re-entrant convergence it runs inside, and its terminal conditions
+(`RESERVE_QUERY_ALL_EXHAUSTED`, `RESERVATION_RECONCILE_STALEMATE`) — is realization architecture, specified
+by ADR-011 / [ADR-006](../docs/adr/ADR-006-convergence-control-model.md) and the DCM docs, not by this data
+model. A peer that upholds the guarantee and the artifacts above conforms, however it converges. Policies
+that opt into that loop (`reconciliation.participates`, policy-contract §7.6) re-evaluate as reserved facts
+land; others evaluate once at the commit barrier.
+
 ### 2.4 Discovered State
 
 The **Discovered State** is what is observed actually existing through active discovery — polling providers, querying infrastructure APIs, interrogating resources. It is the ground truth of what physically exists, independent of what the model believes exists.
@@ -202,7 +238,7 @@ Everything genuinely data-model about rehydration reduces to two rules:
 
 ## 6. Drift Detection
 
-Drift is the difference between what the model believes exists (Realized State) and what actually exists (Discovered State). The drift-detection **runtime** — the comparison cycle, the drift-response actions (REVERT / UPDATE_DEFINITION / ALERT / ESCALATE), and their evaluation — is realization concern (see the DCM operational model). The **drift record shape and severity model** are data model:
+Drift is the difference between what the model believes exists (Realized State) and what actually exists (Discovered State). The drift-detection **runtime** — the comparison cycle, the drift-response actions (the closed action vocabulary is defined once in `entities/resource-service-entities.md` §3), and their evaluation — is realization concern (see the DCM operational model). The **drift record shape and severity model** are data model:
 
 A drift record carries `entity_uuid`, `drifted_fields: [{field_path, realized_value, discovered_value}]`, `discovery_timestamp`, and `drift_severity`.
 
