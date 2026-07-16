@@ -103,6 +103,7 @@ namespaces require a udlm spec change.
 | `credential.*` | Credential issuance, revocation, expiration |
 | `federation.*` | Cross-peer federation errors |
 | `provider.*` | Provider interaction errors |
+| `placement.*` | Placement/scheduling failures — no eligible provider, capacity or locality unsatisfiable, capability mismatch (distinct from `rate_limit.*` capacity) |
 | `schema.*` | Schema sharing, version, or compatibility errors |
 | `timeout.*` | Operation deadline exceeded |
 | `conformance.*` | udlm conformance, feature availability, version compatibility (see [`CONFORMANCE.md`](../CONFORMANCE.md)) |
@@ -140,6 +141,10 @@ Every conformant realization MUST recognize and may emit these codes:
 | `federation.peer_version_incompatible` | no | 409 |
 | `provider.callback_invalid` | no | 400 |
 | `provider.unavailable` | yes | 503 |
+| `placement.no_eligible_provider` | no | 409 |
+| `placement.capacity_exhausted` | yes | 503 |
+| `placement.locality_unsatisfiable` | no | 409 |
+| `placement.capability_mismatch` | no | 422 |
 | `conformance.feature_not_implemented` | no | 501 |
 | `conformance.version_unsupported` | no | 409 |
 | `conformance.declaration_unavailable` | yes | 503 |
@@ -181,10 +186,9 @@ transport-level error codes per the transport's conventions.
 
 ## 6. Audit linkage
 
-Every error envelope MUST include an `audit_uuid` linking to the audit record
-written for the error. The audit record MUST contain:
+Every error envelope carries its audit linkage in **`instance`** — `urn:udlm:audit:<audit_uuid>` (§2) — the URN of the audit record written for the error. (There is no separate top-level `audit_uuid` member; it lives in the `instance` URN, per §2a.) The audit record MUST contain:
 
-- The `request_id` and `audit_uuid` from the envelope (same UUIDs).
+- The `request_id` (envelope extension member) and the `audit_uuid` (from the `instance` URN) — same UUIDs.
 - The originating actor (authenticated identity or `unauthenticated`).
 - The operation attempted.
 - The problem `type`, `title`, and `detail`.
@@ -228,7 +232,7 @@ A conformant realization MUST:
 
 - Emit only error codes in the closed vocabulary (or declared extensions).
 - Set `retryable` correctly per the code semantics.
-- Include `request_id` and `audit_uuid` in every error.
+- Include `request_id` (extension member) and the audit link in `instance` (`urn:udlm:audit:<audit_uuid>`, §2) in every error.
 - Emit the RFC 9457 problem object exactly (§2), with `type` from the closed vocabulary.
 - Reject malformed envelopes from peers with `validation.error_envelope_malformed`.
 
