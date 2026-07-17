@@ -53,14 +53,20 @@ sequenceDiagram
     S->>L: assemble — fill defaults from layers
     L-->>S: assembled request
     S->>S: place — match capability + sovereignty<br/>+ cost + capacity → select provider<br/>(consumer pins narrow eligible set)
-    S->>L: enrich — fill any required_inputs<br/>the consumer didn't supply
-    L-->>S: complete request (provider-ready)
+    S->>S: enrich — policies determine fill strategy<br/>per required_input (tenant layer,<br/>platform default, governed mapping,<br/>or computed from placement)
     S->>S: validate against extension_schema
 
     Note over P,S: Phase 4 — Dispatch
     S->>P: dispatch(complete request +<br/>provider_extensions filled)
     P->>P: reserve — validate + hold<br/>(no side effects)
-    P-->>S: reservation OK
+    alt reserve rejects
+        P-->>S: rejection(field, reason)
+        S->>S: re-enrich (policies adjust)
+        S->>P: re-reserve
+        P-->>S: reservation OK
+    else reserve accepts
+        P-->>S: reservation OK
+    end
     S->>P: commit — build it
     P->>P: create VM, attach storage,<br/>configure network
 
@@ -101,7 +107,7 @@ this provider for placement.
 |------|-----|---------------------|
 | Identity (name, version, health endpoint) | The system needs to reach you and know you're alive | `provider-contract.md` §1 |
 | Capabilities — which resource types you realize, which operations you support | The system needs to match requests to providers who can fulfill them | `capability-discovery.md` §2.1 |
-| Required inputs per resource type — the fields you need beyond the portable base (e.g., `namespace`, `storage_class`) | The system needs to know what to fill in before dispatching to you | `provider-contract.md` §1a.2 |
+| Required inputs per resource type — the fields you need beyond the portable base (e.g., `namespace`, `storage_class`) | The system and policies need to know what must be present before dispatching to you — policies determine where each value comes from | `provider-contract.md` §1a.2 |
 | Extension schema — the JSON Schema for your provider-specific fields | The system validates the enriched request before dispatch; consumers who pin provider-specific fields get validation at intent time | `provider-contract.md` §1a.3, PRV-010 |
 | Sovereignty zones | The system enforces sovereignty constraints at placement | `capability-discovery.md` §2.1 |
 | Capacity (optional but recommended) | The system uses capacity data for placement decisions — without it, placement is capability-match only | UC-10 |
@@ -148,7 +154,7 @@ each one after placement selects a specific provider.
 **What happens at registration:**
 - The system validates the declaration (PRV-003: capabilities not declared at registration cannot be invoked later)
 - Capability admission runs — default-deny; a platform admin must admit each capability before it's usable (§2.5)
-- A coverage check verifies every `required_input` has a fill path in the governed data layers — gaps are caught here, not on a user's first request
+- A coverage check verifies every `required_input` has a fill path — the provider declares what it needs; policies determine where each value comes from (consumer-supplied, tenant layer, platform default, or computed at placement time). Gaps are caught at registration, not on a user's first request
 
 ---
 
@@ -226,11 +232,15 @@ The provider does nothing in this phase. The system handles:
 3. **Placement** — policies narrow to eligible providers based on capability match, sovereignty,
    cost, capacity, and consumer constraints. If the consumer pinned provider-specific fields, only
    providers that accept those values are eligible.
-4. **Enrichment** — a post-placement policy reads governed data and fills in any of the provider's
-   `required_inputs` the consumer did not already supply (e.g., resolves `namespace` for OpenShift
-   from a tenant-to-namespace mapping if the consumer didn't specify one)
-5. **Validation** — the complete request (consumer-supplied + system-enriched) is checked against
-   the provider's `extension_schema`
+4. **Enrichment** — policies determine how to fill any of the provider's `required_inputs` the
+   consumer did not already supply. The fill strategy is policy-driven per field — a value may come
+   from a tenant layer, a platform default, a governed mapping keyed by provider, or be computed
+   from the placement result. The provider declares *what* it needs; policies decide *where* each
+   value comes from and *whether* the consumer was required to supply it.
+5. **Validation** — the complete request (consumer-supplied + policy-enriched) is checked against
+   the provider's `extension_schema`. The provider's reserve step (Phase 4) is the final
+   validation — if anything is wrong regardless of who supplied it, reserve rejects with a
+   field-level error.
 
 The provider's registration (Phase 1) and catalog items (Phase 2) are the inputs the system uses. The
 provider is passive until dispatch.
@@ -279,6 +289,12 @@ request_context:
    only step where real infrastructure changes happen.
 
 Both MUST be **idempotent** — the system may re-drive either step on failure or restart.
+
+The reserve step is where the provider validates the complete request against its own requirements.
+It does not matter who supplied each value — the consumer, a policy, or a governed layer. If the
+provider cannot fulfill the request as assembled, it rejects with a specific reason. The system may
+re-enrich (policies adjust values) and re-reserve in a convergence loop until the request is
+satisfiable or the system determines it cannot be fulfilled.
 
 ---
 
