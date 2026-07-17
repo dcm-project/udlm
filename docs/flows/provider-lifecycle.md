@@ -169,21 +169,73 @@ available.
 | What | Why |
 |------|-----|
 | Resource type + version | Which portable type this offering realizes |
-| Consumer fields | What the consumer fills in at intent time (environment, domain, replicas — business-level choices) |
+| Consumer fields | What the consumer fills in at intent time — business-level choices, plus optionally provider-specific fields |
 | Spec defaults | Sensible defaults for the portable fields the consumer doesn't specify |
 | Constituents + dependencies (for composites) | How a multi-tier offering decomposes and in what order |
-| Bindings | How one constituent's output wires into another's input |
+| Bindings (composites only) | How one constituent's output wires into another's input |
 
-**Example — a three-tier app catalog item:**
+### Simple catalog item — a VM
+
+Continuing the VM example from Phase 1. The OpenShift VM provider publishes a catalog item for a
+single virtual machine:
+
+```yaml
+name: Compute.VirtualMachine.OCP
+resource_type: Compute.VirtualMachine
+type_version: 0.1.1
+
+spec_defaults:
+  guest_os: rhel-9
+  disks:
+    - size_gb: 100
+      type: ssd
+
+consumer_fields:
+  - name: environment
+    type: enum
+    required: true
+    enum_values: [dev, staging, prod]
+  - name: vcpu
+    type: integer
+    required: false
+    default: 2
+  - name: memory
+    type: integer
+    required: false
+    default: 8192
+  - name: namespace
+    type: string
+    required: false
+    description: "OpenShift namespace — optional; resolved by policy if omitted"
+  - name: storage_class
+    type: string
+    required: false
+    description: "Storage class — optional; resolved by policy if omitted"
+```
+
+The consumer sees `environment`, `vcpu`, `memory` as the primary choices. `namespace` and
+`storage_class` are visible but optional — the consumer MAY specify them if they know what they want
+(honored, validated, flagged as non-portable per `PRV-010`). If omitted, policies resolve them
+post-placement. The provider declares *what* it needs at registration (Phase 1); the catalog item
+exposes *whether* the consumer can supply it directly.
+
+### Composite catalog item — a three-tier application
+
+A provider that offers a complete application stack publishes a composite catalog item. The
+composite decomposes into constituents with dependency ordering and output bindings:
 
 ```yaml
 name: ApplicationStack.ThreeTierWebApp
+composition_visibility: transparent
+
 constituents:
   - component_id: database
     resource_type: Data.Database
     depends_on: []
+    failure_effect: required
     spec_defaults:
       engine: postgresql
+      high_availability: false
 
   - component_id: app
     resource_type: Compute.Container
@@ -192,6 +244,9 @@ constituents:
       - from_component: database
         output: connection_string
         to_field: env.database_url
+    failure_effect: required
+    spec_defaults:
+      replicas: 2
 
   - component_id: web
     resource_type: Compute.Container
@@ -200,23 +255,33 @@ constituents:
       - from_component: app
         output: internal_dns
         to_field: env.upstream_host
+    failure_effect: partial
+    spec_defaults:
+      replicas: 2
 
 consumer_fields:
   - name: environment
     type: enum
+    required: true
     enum_values: [dev, staging, prod]
   - name: domain
     type: string
+    required: true
   - name: replicas
     type: integer
+    required: false
     default: 2
 ```
 
-The consumer is not *required* to specify `namespace` or `storage_class` — those can be resolved by the
-system after placement. But a consumer who knows what they want MAY specify them at intent time; the value
-is honored, validated against the provider's extension schema, and flagged as non-portable (`PRV-010`).
-The `consumer_fields` above are the business-level choices every consumer sees; provider-specific fields
-are optional additions the consumer can make with eyes open.
+The system decomposes this into three separate requests dispatched in dependency order (database →
+app → web). Each constituent goes through the same placement → enrichment → reserve → commit cycle
+described in Phases 3–4. The `bindings` wire outputs from one constituent into the next — the
+database's `connection_string` output feeds the app's `env.database_url` input automatically.
+
+For the composite, the consumer sees only `environment`, `domain`, `replicas` — they don't manage
+the individual constituents or their wiring. Provider-specific fields for each constituent (which
+namespace the containers land in, which storage class the database uses) are resolved per-constituent
+by the same policy-driven enrichment as a simple request.
 
 ---
 
