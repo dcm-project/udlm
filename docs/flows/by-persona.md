@@ -14,11 +14,6 @@ The everyday consumer: asks for what they need in portable terms and lets the sy
 - [UC-04 · VM provision, provider fails mid-realization](uc-04-vm-provision-with-provider-failure.md)
 - [UC-05 · Idempotent reconvergence](uc-05-idempotent-reconvergence.md)
 
-## provider — register, catalog, fulfill, report
-The provider's complete lifecycle: declare capabilities and required inputs, publish catalog items, receive
-enriched requests, build infrastructure, report realized state, maintain discovered state.
-- [Provider lifecycle — the full journey](provider-lifecycle.md)
-
 ## platform-operator — model, register, and operate the estate
 Runs the substrate: models resources and their dependency graph, registers providers, keeps ordering sound.
 - [UC-06 · VM as a first-class resource](uc-06-vm-resource-representation.md)
