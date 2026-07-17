@@ -330,7 +330,12 @@ spec:
     - size_gb: 100
       type: ssd
   networks:
-    - name: prod-vlan-40
+    - name: eth0
+      network_ref:
+        ref_uuid: "b7e3f1a2-..."        # → existing Network.VirtualNetwork
+        ref_name: "prod-vlan-40"         # advisory (human-readable)
+        reference_data_type: network
+      ip_mode: dynamic
 
 provider_extensions:
   ocp-prod-east:
@@ -342,6 +347,14 @@ request_context:
   sovereignty_zone: "us-east-1"
   intent_uuid: "a1b2c3d4-..."
 ```
+
+Network attachments are **references to existing resources** (`Network.VirtualNetwork`), not free-form
+strings — the `network_ref` uses the canonical data-reference shape (ADR-012) where `ref_uuid` is
+authoritative and `ref_name` is advisory. The same reference pattern applies wherever a field points at
+another resource (storage volumes, IP addresses, topology objects). References are version-pinned via
+`ref_uuid` (each version mints a new UUID), but the referenced resource's handle remains stable across
+versions — so a consumer or policy can reference "prod-vlan-40" and the system resolves to the current
+version.
 
 **What the provider does — two-phase realize:**
 
@@ -387,7 +400,9 @@ realized:
   vcpu: 4
   memory: 16384
   fqdn: "vm-0042.tenant-alpha-prod.ocp-east.internal"
-  ip_address: "10.128.4.42"
+  ip_address:
+    ref_uuid: "c9d4e5f6-..."            # → realized Network.IPAddress
+    ref_name: "10.128.4.42"
   storage_path: "/dev/rbd0"
 
 outputs:
@@ -397,11 +412,21 @@ outputs:
 relationships_created:
   - type: attached
     target_type: Storage.Volume
-    target_native_id: "ceph/pvc-a1b2c3"
+    target_ref:
+      ref_uuid: "d8e9f0a1-..."          # → realized Storage.Volume
+      ref_name: "pvc-a1b2c3"
+    target_native_id: "ceph/pvc-a1b2c3"   # provider's native id for correlation
   - type: connected
-    target_type: Network.VLAN
+    target_type: Network.VirtualNetwork
+    target_ref:
+      ref_uuid: "b7e3f1a2-..."          # → same Network.VirtualNetwork from intent
+      ref_name: "prod-vlan-40"
     target_native_id: "vlan-40"
 ```
+
+Relationships use the same reference pattern — `target_ref` points at the UDLM resource by UUID,
+`target_native_id` carries the provider's native identifier for correlation. The system can walk
+references in either direction (UDLM UUID ↔ provider native ID) because both are recorded.
 
 The system authors the realized relationships from this report — the provider supplies the
 correlation, the system sets the edges in the graph.
