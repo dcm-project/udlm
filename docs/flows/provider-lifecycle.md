@@ -12,7 +12,7 @@ consumer-facing options." A consumer asks for a VM. The system picks this provid
 from governed data, and hands the provider a complete request. The provider reserves, commits, builds the
 VM, and reports back what it did. From then on, it reports discovered state so the system can detect drift.
 The provider never sees the portable abstraction layer — it gets a request that already has everything it
-needs.
+needs, regardless of whether the consumer or the system supplied each value.
 
 ## The lifecycle — six phases
 
@@ -49,12 +49,12 @@ sequenceDiagram
     S-->>C: catalog item visible
 
     Note over C,S: Phase 3 — Consumer requests (provider is passive)
-    C->>S: intent(VM, 4 cpu, 16G mem, rhel-9)
+    C->>S: intent(VM, 4 cpu, 16G mem, rhel-9<br/>+ optional: namespace, storage_class)
     S->>L: assemble — fill defaults from layers
-    L-->>S: assembled request (still portable)
-    S->>S: place — match capability + sovereignty<br/>+ cost + capacity → select provider
-    S->>L: enrich — resolve required_inputs<br/>(namespace, storage_class)
-    L-->>S: enriched request (provider-ready)
+    L-->>S: assembled request
+    S->>S: place — match capability + sovereignty<br/>+ cost + capacity → select provider<br/>(consumer pins narrow eligible set)
+    S->>L: enrich — fill any required_inputs<br/>the consumer didn't supply
+    L-->>S: complete request (provider-ready)
     S->>S: validate against extension_schema
 
     Note over P,S: Phase 4 — Dispatch
@@ -206,8 +206,11 @@ consumer_fields:
     default: 2
 ```
 
-The consumer never sees `namespace` or `storage_class` here — those are provider internals resolved by
-the system. The consumer sees `environment`, `domain`, `replicas` — business choices.
+The consumer is not *required* to specify `namespace` or `storage_class` — those can be resolved by the
+system after placement. But a consumer who knows what they want MAY specify them at intent time; the value
+is honored, validated against the provider's extension schema, and flagged as non-portable (`PRV-010`).
+The `consumer_fields` above are the business-level choices every consumer sees; provider-specific fields
+are optional additions the consumer can make with eyes open.
 
 ---
 
@@ -215,13 +218,19 @@ the system. The consumer sees `environment`, `domain`, `replicas` — business c
 
 The provider does nothing in this phase. The system handles:
 
-1. **Intent** — a consumer asks for a VM (or a three-tier app, or a database)
+1. **Intent** — a consumer asks for a VM (or a three-tier app, or a database). The consumer MAY
+   include provider-specific fields (e.g., a specific `namespace`) — these are honored and narrow
+   the placement. Or the consumer may leave them to the system — the request is as vague or exact
+   as the consumer chooses.
 2. **Assembly** — data layers fill in defaults (profile, tenant, platform layers)
 3. **Placement** — policies narrow to eligible providers based on capability match, sovereignty,
-   cost, capacity, and consumer constraints
-4. **Enrichment** — a post-placement policy reads governed data and fills in the provider's
-   `required_inputs` (e.g., resolves `namespace` for OpenShift from a tenant-to-namespace mapping)
-5. **Validation** — the enriched request is checked against the provider's `extension_schema`
+   cost, capacity, and consumer constraints. If the consumer pinned provider-specific fields, only
+   providers that accept those values are eligible.
+4. **Enrichment** — a post-placement policy reads governed data and fills in any of the provider's
+   `required_inputs` the consumer did not already supply (e.g., resolves `namespace` for OpenShift
+   from a tenant-to-namespace mapping if the consumer didn't specify one)
+5. **Validation** — the complete request (consumer-supplied + system-enriched) is checked against
+   the provider's `extension_schema`
 
 The provider's registration (Phase 1) and catalog items (Phase 2) are the inputs the system uses. The
 provider is passive until dispatch.
@@ -357,9 +366,13 @@ Provider                          System                           Consumer
                                   ← catalog visible to consumers
                                                                    Browse catalog
                                                                    Submit intent
+                                                                   (may include provider-
+                                                                    specific fields — optional)
                                   Assemble (layers)
-                                  Place (match + select)
-                                  Enrich (fill required_inputs)
+                                  Place (match + select;
+                                    consumer pins narrow the field)
+                                  Enrich (fill any required_inputs
+                                    the consumer didn't supply)
                                   Validate (against extension_schema)
 
 3. (passive)
