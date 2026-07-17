@@ -1,4 +1,4 @@
-# DCM — Unified Provider Contract
+# UDLM — Unified Provider Contract
 
 
 **Document Status:** ✅ Complete
@@ -44,7 +44,7 @@ The **base level** is the minimum a provider must implement for **DCM/UDLM to ow
 
 1. **Target resource types + capability scope** — which resource types it manages (ADR-004; §2). DCM places/matches against this.
 2. **Required data** — the input schema it needs to realize/manage each target resource, so DCM can collect intent and own the lifecycle.
-3. **Config-projection detail** — enough config schema/detail for the **DCM interface to project a configuration interface to the user across the config lifecycle**, at the provider's supported scale (basic text passthrough → typed; DCM ADR-023 §6). No detail → DCM still projects a basic text passthrough; more detail → a typed interface.
+3. **Config-projection detail** — the provider supplies enough config schema/detail for a DCM to project a configuration interface at the provider's supported scale (basic text passthrough → typed; DCM ADR-023 §6). **If the provider exposes its OWN editor** (rather than being edited through DCM's projected interface), the contract binds it to keep the audit loop closed — a provider editor is **not** an audit bypass. It MUST: **(a)** report the resulting **realized-state updates** back to DCM (denaturalized, per-resource, §1a.5 read-back) so the config **state** is recorded (UDLM is the state system-of-record — ADR-016 §3); **(b)** submit every edit to DCM's **actor authorization**, so the applied change is attributed to a DCM-validated actor (item 8); and **(c)** carry its `data_classification` and `tenant_uuid` and stay **within tenant and sovereignty bounds** — an edit is governed exactly as any other boundary crossing (§4). The invariant the contract guarantees: **no config change reaches Realized without an authorized in-tenant actor, a governance-cleared edit, a read-back, and an audit leaf.** *How* a DCM projects the interface, sequences before/after actor validation, and evaluates the Governance Matrix on an edit is DCM's to implement (a peer may differ — ADR-008); see the DCM **config-projection** spec (`dcm/docs/specifications/dcm-config-projection.md`).
 4. **Lifecycle functions** — the **two-phase realize** pair `reserve` / `commit`, plus `converge` / `decommission`: execute the four-state transitions DCM drives (§6, §6a dispatch). Realization is **reserve-then-commit** (ADR-011): `reserve` validates + holds with **no side effects**; `commit` builds the held reservation; nothing is committed until the whole reserved graph validates. All MUST be **idempotent / re-entrant** (ADR-006 convergence) so DCM can re-drive.
 5. **Discovered-state reporting** — report realized/discovered state **back, per resource** (denaturalization, DCM ADR-023 §1), with an **identity correlation** (UDLM `uuid` ↔ the provider's native id). *Without this read-back DCM is blind to reality and cannot own the lifecycle* — it is the load-bearing function that closes the loop and feeds drift/convergence/rehydrate.
 6. **Audit** — emit audit events for its actions (state transitions, relationship mutations) into the chain (SPEC-DESIGN §18d; §7).
@@ -127,19 +127,32 @@ provider_base_registration:
   # All providers declare these. NOTE (DCM ADR-022): the sovereignty_declaration is a CLAIM, not proof.
   # For sovereign/restricted zones DCM honors it for placement only when backed by a resolved
   # sovereign_authorization / adequacy accreditation; an unattested declaration is treated at
-  # self_asserted tier (see storage-providers.md §11). Drift detection is the backstop, not the gate.
+  # self_asserted tier (see storage-providers.md §6). Drift detection is the backstop, not the gate.
   # SCOPE (UDLM ADR-004 §4): this is the provider-level DEFAULT stance. A capability MAY override it per
   # (verb × domain) category — finest-granularity-wins — because residency differs by what is realized
   # (e.g. Compute EU-only, Storage global). Trust requires a 1-1 match between each sovereignty claim and
   # an accreditation attesting EXACTLY its scope; a claim at either scope with no matching accreditation
   # is self_asserted and never honored. Claim and accreditation are reconciled, never assumed to agree.
-  sovereignty_declaration:
+  sovereignty_declaration:                       # the SINGLE sovereignty shape — every capability (storage-providers §11.2, etc.) references this, none redefines it
+    # --- REQUIRED core (the matchable base) ---
     operating_jurisdictions: [<country_codes>]   # ISO 3166 — sovereignty regime matched EXACTLY (accreditation-matrix §3.8)
     data_residency_zones: [<zone_ids>]           # ISO 3166 subdivisions — residency SUBSUMES down the hierarchy (US covers US-MN)
     enforcement_plane: both                      # data | control | both — WHICH plane is attested (§3.8). A data-plane
                                                  #   requirement is only satisfied by a data|both attestation; for it DCM conveys
                                                  #   the requirement + execution-slice to the enforcing provider and verifies ITS attestation.
-    sub_processors: []                   # third parties with data access
+    sub_processors: []                           # third parties with data access (name, jurisdiction, data_handled)
+    # --- OPTIONAL detail — carried on EVERY provider for conformity; REQUIRED only where a profile/policy
+    #     demands it (ADR-014 optionality-with-conformity: the field is present for a comparable vocabulary;
+    #     a `sovereign`/`fsi` profile marks which are mandatory, a homelab leaves them null). Available so
+    #     teams can test or use them on genuine need, without forcing them on everyone.
+    data_residency_guarantee: <true|false>       # data never leaves the declared jurisdictions
+    legal_frameworks: []                         # e.g. [eu_gdpr, eu_nis2]; excluded_frameworks: [] for gaps it cannot meet
+    jurisdiction_detail: []                      # per-jurisdiction enrichment: [{country, legal_system, data_center_location}]
+    external_dependencies: {}                    # air_gap_capable, external_services[] (service, jurisdiction, data_shared), opt_out_available
+    government_access_risk: {}                   # jurisdictions_with_compelled_access[], legal_challenge_policy (e.g. US CLOUD Act / FISA 702 exposure)
+    certifications: []                           # [{name, issuer, valid_from, expires_at, scope, certificate_ref}] — ISO-27001, SOC2-Type-II, …
+    audit_rights: {}                             # customer_audit_right, audit_notice_days, third_party_audit_accepted
+    change_notification: {}                      # notification_endpoint + mandatory_notification_events[] + notification_sla — a sovereignty change MUST be notified
 
   # Self-declared standards adherence (Gaia-X self-description / OSCAL SSP lineage). Each framework is a
   # CLAIM — self_asserted until an accreditation attests it (same claim→attestation escalation as sovereignty,
@@ -213,7 +226,7 @@ dcm_registration_verdict:                # DCM-OWNED — references the submissi
     - capability: serve_data/Network           # POLICY (Governance Matrix), not here. Domain granularity is inherent:
       disposition: provisional           # a category IS verb×domain (approve /Storage, deny /Compute independently).
   effective_capabilities: [realize_resources/Storage]   # COMPUTED intersecting CEILING (ADR-PROV-003); starts EMPTY:
-                                         # declared ∩ admitted ∩ registry-enabled ∩ Governance-Matrix-permitted
+                                         # the default-deny ceiling formula — capability-discovery §2 / PRV-009
                                          # (mirrors effective_accepts_roles). A provider can never exceed this.
                                          # Admission history is IMMUTABLE: every admin change is an explicit forward
                                          # CAPABILITY_ADMIT audit event (actor+reason); current = LIFO-newest.
@@ -546,6 +559,32 @@ Rules:
 - **Refreshed, not static.** Capacity changes are pushed via the `resource.capacity_changed` lifecycle event (§6), so placement reads current free capacity, not registration-time values.
 - **Eligibility is policy, not provider fiat.** The provider *declares* constraints; the **org's policy + Governance-Matrix** resolve which advertised resources a given consumer/zone/tenant may actually select (the "org ratifies" rule). A provider cannot grant itself selection authority by advertising.
 
+**Size-class resolution — `instance_size_catalog` (the abstract↔precise bridge).** When a resource type ships sized-by-class (`instance_size` — ADR-014, `common-elements §2.2`), the class is a *comparable but abstract* vocabulary. To let placement compare an abstract size against a **raw** requirement (or resolve one provider's class against another's), the provider **declares its class → raw mapping** here — the provider is the authority on what *its* `medium` is (ADR-014: the provider owns the concrete mapping):
+
+```yaml
+instance_size_catalog:                  # per capability/category; the provider's authoritative size classes
+  - class: small    resources: { vcpu: { count: 2 }, memory: { size: 8GB } }
+  - class: medium   resources: { vcpu: { count: 4 }, memory: { size: 16GB } }
+  - class: large    resources: { vcpu: { count: 8 }, memory: { size: 32GB } }
+```
+
+DCM resolves `instance_size` → raw via this catalog, then applies the **same** `capacity-sufficient` test as a raw request (a raw requirement selects the smallest class whose resolved resources satisfy it). Split, per ADR-014: the **class vocabulary + ordering** is UDLM (portable/comparable), the **class→raw mapping** is the provider's (this catalog), the **resolution/comparison** is DCM (placement). It is **declared, not live-queried** — placement scores many providers at once, so a per-request round-trip per provider is prohibitive; a provider with *parametric* classes MAY additionally expose a `resolve(size)` callback, but the declared catalog is the default.
+
+**Abstract-value channels & the realized audit record (the same bridge, generalized).** `instance_size` is one instance of a broader pattern: intent may carry an **abstract value the provider resolves** — a size class, or an engine **`version` channel** like `latest`/`lts` (`Data.Database`, ADR-014). The same three obligations apply to *any* such abstract value:
+
+1. **Declare the resolution.** The provider **declares** how it resolves the abstract value to concrete — for versions, its channel → concrete-version map per engine — so placement can **compare, conform, and validate** an abstract request against a raw/pinned requirement (and against an adjacent provider's channel) *before* it commits. **Declared, not live-queried** — same reason as the size catalog.
+
+   ```yaml
+   version_channels:                     # per engine; the provider's authoritative channel resolution
+     - engine: postgres   channel: latest   resolves_to: "16.4"   supported: ["14.x","15.x","16.x"]
+     - engine: postgres   channel: lts      resolves_to: "15.8"
+     - engine: mysql      channel: latest   resolves_to: "8.4.2"
+   ```
+
+2. **Resolve at naturalization.** When intent is abstract (or omitted → the provider's default channel), the provider resolves to the concrete value it will actually provision (DCM ADR-023).
+
+3. **Record the concrete on the realized resource — for audit.** The provider **MUST** write the resolved concrete value into realized state (for `Data.Database`, `outputs.applied_version`; §1a.5 read-back). This is the load-bearing half: an abstract request (`latest`) is only auditable if reality records *what `latest` became* (`16.4`) at the moment it was applied. Intent carries the abstract; **realized carries the concrete**; the two together are the audit trail. This obligation holds for every abstract intent value, not just versions.
+
 **Placement (DCM ADR-019) selects from `inventory ∩ capacity-sufficient ∩ policy-eligible`.** A consumer's `*_ref` selection (e.g. `placement.location_ref`, `networks[].network_ref`) MUST resolve to a resource in that eligible set; when `fulfillment: platform` (ADR-009), DCM chooses within it. Consumption debits the selected resource's capacity and any applicable **quota** (the tenant-quota structure — the consumption side, September P7).
 
 **Boundary (ADR-008):** the advertisement *shape* (inventory/capacity/eligibility) is UDLM — a peer must read another provider's advertisement identically or placement disagrees. The placement *algorithm* and how a provider computes free capacity are DCM/provider.
@@ -566,9 +605,8 @@ information_provider_capabilities:
   data_domains:
     - domain: business_data
       data_types: [business_unit, cost_center, product_owner]
-      # authority_level is NOT self-declared (INF-006) — DCM assigns it from the admin-owned authority
-      # layer. It decides which source wins data conflicts, so a provider naming its own data "primary"
-      # would self-grant precedence over the true system-of-record. A value supplied here is ignored.
+      # authority_level is NOT self-declared — DCM assigns it; a value supplied here is ignored.
+      # Rule defined once in information-providers-advanced.md (the authority/confidence model).
   query_capacity:
     max_queries_per_second: 100
   confidence_model:
@@ -750,7 +788,7 @@ A provider registers with a **capability set** (each `verb × domain`), verified
 | `PRV-006` | Service Providers that declare `dependency_introspection.supported: true` MUST respond to the dependency-introspection endpoint for any entity they host. Returned edges are recorded as observed (not declared) per [Service Dependencies](../entities/service-dependencies.md) §3a and policies OBS-001..OBS-005. Providers that do not declare the capability are exempt; the substrate records `dependency_introspection_unavailable` for affected entities. |
 | `PRV-007` | Observability is part of the base contract: providers declare their telemetry surface (metrics, logs, events) at registration using standard exposition formats. DCM MUST be able to manage collection — discover, configure delivery, verify activity, and audit-record — for all appropriate resources; it is not required to arbiter the telemetry data itself, but MAY serve as the authoritative telemetry/monitoring platform (dcm-observability) where none exists or a canned solution is desired. Integration mechanism TBD (leading candidate: UDLM-modeled export). |
 | `PRV-008` | Only `role: execution` data crosses the dispatch boundary by default (ADR-PROV-001; [data-roles.md](data-roles.md)). The payload a provider receives is the INTERSECTION of its declared `accepts_roles` and what the Governance Matrix permits at the DCM→Provider boundary. Sovereignty/profile policy may strip a role a provider requested; it can never widen beyond `accepts_roles`. `role: assembly` (and other control-plane roles) MUST NOT be naturalized to a provider that has not opted in, and MUST NOT be copied into `states.realized`. |
-| `PRV-009` | **Default-deny (ADR-PROV-003).** By default no use of a provider is allowed: a declared capability/category grants no authority and is UNUSABLE until admitted — `effective_capabilities` starts empty. At registration DCM records each declared capability/category in the DCM-assigned verdict (`capability_admissions`) as `pending` — the platform-admin worklist. A platform admin dispositions each at **platform level** (`approved \| provisional \| denied` — coarse, platform-wide) via the Admin API (mechanism: DCM registration spec §7.4a; RBAC `platform_admin`; approver stringency is **profile-governed** per PROF-010 — "default safe": the security default derives from the platform profile(s) in use, and no profile weakens default-deny). **Granular / conditional approval** (per tenant/zone/resource/context) is **policy** — Governance-Matrix rules — not an admin-disposition field; domain granularity is inherent (a category IS verb×domain). DCM enforces only the **computed intersecting ceiling** `effective_capabilities` = declared ∩ admitted ∩ registry-enabled ∩ Governance-Matrix-permitted (mirrors `PRV-008`/`accepts_roles`); a provider can never invoke outside it. The disposition is admin-set (never self-declared); every admission change is an explicit forward `CAPABILITY_ADMIT` audit event (actor + reason), immutable, reconstructed LIFO. `provisional` = admitted but restricted/shadowed. |
+| `PRV-009` | **Default-deny (ADR-PROV-003).** By default no use of a provider is allowed: a declared capability/category grants no authority and is UNUSABLE until admitted — `effective_capabilities` starts empty. At registration DCM records each declared capability/category in the DCM-assigned verdict (`capability_admissions`) as `pending` — the platform-admin worklist. A platform admin dispositions each at **platform level** (`approved \| provisional \| denied` — coarse, platform-wide) via the Admin API (mechanism: DCM registration spec §7.4a; RBAC `platform_admin`; approver stringency is **profile-governed** per PROF-010 — "default safe": the security default derives from the platform profile(s) in use, and no profile weakens default-deny). **Granular / conditional approval** (per tenant/zone/resource/context) is **policy** — Governance-Matrix rules — not an admin-disposition field; domain granularity is inherent (a category IS verb×domain). DCM enforces only the **computed intersecting ceiling** `effective_capabilities` — the default-deny formula is defined once in [`capability-discovery.md`](capability-discovery.md) §2 (mirrors `PRV-008`/`accepts_roles`); a provider can never invoke outside it. The disposition is admin-set (never self-declared); every admission change is an explicit forward `CAPABILITY_ADMIT` audit event (actor + reason), immutable, reconstructed LIFO. `provisional` = admitted but restricted/shadowed. |
 | `PRV-010` | **Resource-type extension (ADR-PROV-004, closes #198).** A provider MAY extend a resource type it realizes by ADDING data elements, but MUST NOT override, shadow, or redefine any base element — the base type-spec is closed (`additionalProperties: false`). It **declares** its extensions at registration (which base type + the added elements and their schema), and at realization writes them ONLY into the realized entity's provider-namespaced `provider_extensions` surface; the validator rejects any extension path colliding with a base spec field. Any extension **degrades portability**: DCM computes `portability_breaking: true`, narrows the classification, records the extension keys + bound provider, and **notifies the consumer** before/at realization (silent non-portability prohibited). A genuinely new type is a Tier-2 `Vendor.Type` fork, not an extension; a recurrence across ≥2 providers promotes to a base MINOR. |
 
 ---
