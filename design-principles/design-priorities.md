@@ -1,4 +1,4 @@
-# UDLM — Design Principles
+# UDLM — Design Priorities
 
 **Document Status:** ✅ Stable — UDLM substrate contract
 **Document Type:** Substrate Reference — Design Philosophy
@@ -41,7 +41,7 @@ Every one of these security properties is present in `minimal`; only its enforce
 
 **When security and convenience conflict, security wins** — but the design must find a way to make the secure option easy. A security model that is routinely bypassed because it is too burdensome has failed at both security and usability. The profile system is the mechanism: the right profile makes secure behavior automatic, not effortful.
 
-**Security properties that are non-negotiable in all profiles:**
+**Security properties that are non-negotiable in all profiles** — this table is the single normative list; the `minimal`-profile narrative above illustrates it, the Profile Scaling Table shows each property's per-profile posture, and the `DPO-*` policies enforce it — none re-defines it:
 
 | Property | Rule | Reference |
 |----------|------|-----------|
@@ -67,6 +67,8 @@ The secure path must also be the easy path. Profile defaults should work for mos
 **Ease of use serves security.** An organization that finds the system too cumbersome and routes requests outside it has eliminated all of its security benefits. A team that circumvents credential management because it's too complex has no credential management.
 
 **The design principle:** When implementing a security requirement, simultaneously design the ease-of-use mechanism that makes it effortless to comply with. A scoring model's auto-approval threshold (not making every request require human review) is ease of use in service of security.
+
+**Human-in-the-loop is a last resort, not a design tool.** Every point where a request routes to a human — an approval tier, `route-to-review`, an override — is a **necessary anti-pattern**: sometimes unavoidable (a genuine compliance exception that only an authorized human may grant), but always a cost to minimize, never the default. The goal is automated, policy-driven governance where a *policy* decides; `route-to-review` exists so a governed **exception** has an auditable path, **not** so the common case can defer to a human. A design that reaches for human review where a policy could decide has failed this priority (`DPO-007`).
 
 **Things that should be easy in all profiles:**
 - Requesting a standard resource (auto-approve for clean requests)
@@ -173,7 +175,7 @@ UDLM defines the following named profiles as the substrate vocabulary. Realizati
 
 ### Profile Scaling Table (Reference)
 
-The table below illustrates the **shape** of profile scaling. Specific threshold values are realization-defined (a peer realization MAY pick different absolute values). What is invariant is the monotonic ordering: stricter profiles must be at least as strict as looser profiles on every dimension. "Present" means the property is architecturally required — what varies is the configuration.
+The table below illustrates the **shape** of profile scaling — each profile's posture per dimension. Threshold values are realization-defined (a peer MAY pick different absolute values). Profiles are **composed sets, not ordered levels** ([ADR-007](../docs/adr/ADR-007-profile-model.md)): `sovereign` is not "more of" `standard`, and there is **no monotonic total order across profiles**. Read the table *down a column* — one profile's coherent posture — not as a ranking across columns. Each *dimension* has a direction (it runs loose→tight); which point a profile takes on it is that profile's composed choice, and `fsi`/`sovereign` are **overlays** on a base profile, not stricter points on one scale. "Present" means the property is architecturally required — what varies is the configuration.
 
 | Security Property | minimal | dev | standard | prod | fsi | sovereign |
 |------------------|---------|-----|----------|------|-----|-----------|
@@ -199,14 +201,14 @@ UDLM defines an ordered authority tier vocabulary that applies to requests, poli
 
 ### Default Tier Vocabulary
 
-Each tier carries a `decision_gravity` — the governance weight of a decision (`none` / `routine` / `elevated` / `critical`), indicating how much authority it warrants. The term is defined in [GLOSSARY](../GLOSSARY.md) and specified in [Authority Tier Model](../governance/authority-tier-model.md).
+Each tier carries a `decision_gravity` (the governance weight of a decision). The values and the per-tier `tier → decision_gravity` mapping are specified once in [Authority Tier Model](../governance/authority-tier-model.md) (glossed in [GLOSSARY](../GLOSSARY.md)) — not restated here. This document carries only the ordered tier vocabulary and its substrate role:
 
-| Tier | Required authority level | Substrate role |
+| Tier | Required authority | Substrate role |
 |------|-------------------------|-----------------|
-| `auto` | None — `decision_gravity: none`; system confidence sufficient | Validation passes; automatic activation |
-| `reviewed` | Standard authority — `decision_gravity: routine`; one qualified reviewer in the relevant domain | One actor with reviewer role records a decision |
-| `verified` | Elevated authority — `decision_gravity: elevated`; independent confirmation required; separation of duties | Two distinct actors with reviewer role each record a decision |
-| `authorized` | Senior/governing authority — `decision_gravity: critical`; highest organizational weight; most consequential decisions | N members of the declared group record decisions within a window |
+| `auto` | None — system confidence sufficient | Validation passes; automatic activation |
+| `reviewed` | Standard — one qualified reviewer in the relevant domain | One actor with reviewer role records a decision |
+| `verified` | Elevated — independent confirmation required; separation of duties | Two distinct actors with reviewer role each record a decision |
+| `authorized` | Senior/governing — highest organizational weight; most consequential decisions | N members of the declared group record decisions within a window |
 
 ### Tier Extensibility (Vocabulary)
 
@@ -241,6 +243,7 @@ The `on_expiry` action vocabulary (`escalate`, `reject`) is closed at the substr
 | `DPO-004` | Fit for purpose is a precondition, not a priority. All four priorities apply only within the constraint that the system can fulfill its lifecycle management mission. |
 | `DPO-005` | The `minimal` profile is "security with minimal operational overhead" — not "minimal security." Design decisions that disable security properties rather than scaling them violate DPO-001. |
 | `DPO-006` | When security and ease of use conflict, redesign the ease-of-use mechanism — not the security requirement. The secure path must also be the easy path. |
+| `DPO-007` | Human-in-the-loop (approval, `route-to-review`, override) is a last-resort anti-pattern — necessary for genuine authorized exceptions, minimized everywhere else. A decision a policy could make automatically MUST NOT route to a human; `route-to-review` is the exception path, not the common one. The goal is to reduce human-in-the-loop as far as governance allows. |
 
 ---
 
