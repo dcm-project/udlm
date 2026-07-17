@@ -7,7 +7,7 @@
 
 > **Foundation Document Reference**
 >
-> This document is a detailed reference for a specific domain of the DCM architecture.
+> This document is a detailed reference for a specific domain of the UDLM data model.
 > The three foundational abstractions — Data, Provider, and Policy — are defined in
 > [foundations.md](../foundations/foundations.md). All concepts in this document map to one or
 > more of those three abstractions.
@@ -602,7 +602,7 @@ provider_registration:
   supported_lifecycle_operations:
     <see lifecycle contract — provider-contract.md>
   attestation:
-    <attestation EVIDENCE — see provider-contract.md §2. trust_posture is DCM-assigned in the verdict, not self-declared here (ADR-022).>
+    <attestation EVIDENCE — see provider-contract.md §2. trust_posture is DCM-assigned in the verdict, not self-declared here (DCM ADR-022).>
 ```
 
 ### 6.2 Catalog Item Declaration
