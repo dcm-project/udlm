@@ -40,13 +40,22 @@ def field_index(spec):
     req = set()
 
     def collect(schema, prefix=""):
+        if not isinstance(schema, dict):
+            return
         for name in (schema.get("required") or []):
             req.add(f"{prefix}.{name}" if prefix else name)
         for name, node in (schema.get("properties") or {}).items():
             path = f"{prefix}.{name}" if prefix else name
             out[path] = node
-            if isinstance(node, dict) and node.get("type") == "object":
-                collect(node, path)
+            collect(node, path)
+        # Schema combinators: index each branch's fields at the SAME path. A field
+        # expressed as "inline shape OR data_reference" (the ADR-012 pattern) keeps its
+        # inner fields addressable, so wrapping an existing shape in a new oneOf branch is
+        # additive (MINOR), not a field removal (MAJOR). Without this, any type adopting a
+        # data_reference oneOf false-fails the compat gate.
+        for key in ("oneOf", "anyOf", "allOf"):
+            for branch in (schema.get(key) or []):
+                collect(branch, prefix)
 
     collect(spec)
     return out, req
@@ -117,15 +126,27 @@ def main() -> int:
     old, new = load(sys.argv[1]), load(sys.argv[2])
     required, reasons = classify(old, new)
     declared = declared_bump(old["version"], new["version"])
+    # Pre-1.0 relaxation (semver 0.x; UDLM 1.0 not yet cut): a 0.x type is not yet
+    # backward-compat-committed, so a breaking (MAJOR-classified) change is permitted under a MINOR
+    # bump until 1.0. The classification is still computed and printed so the break stays VISIBLE and
+    # can be denoted in migration_guidance; only the enforced bar is relaxed. Once a type reaches 1.x
+    # the full MAJOR bar applies again.
+    pre_1_0 = int(str(new["version"]).split(".")[0]) == 0
+    enforced = "minor" if (pre_1_0 and required == "major") else required
+    note = "   [pre-1.0: MAJOR relaxed to MINOR]" if enforced != required else ""
     print(f"{old['resource_type']}: {old['version']} -> {new['version']}")
-    print(f"  required bump: {required.upper()}   declared bump: {declared.upper()}")
+    print(f"  required bump: {required.upper()}   declared bump: {declared.upper()}{note}")
     for level in ("major", "minor"):
         for r in reasons[level]:
             print(f"    [{level}] {r}")
-    if RANK[declared] < RANK[required]:
-        print(f"\nFAIL: a {required} change must bump at least the {required} component "
+    if RANK[declared] < RANK[enforced]:
+        print(f"\nFAIL: a {enforced} change must bump at least the {enforced} component "
               f"(declared {old['version']} -> {new['version']}).")
         return 1
+    if enforced != required:
+        print("\nOK (pre-1.0): a MAJOR-classified change is allowed under a MINOR bump until 1.0 — "
+              "denote it in migration_guidance if it is a real incompatibility.")
+        return 0
     print("\nOK: declared version bump is sufficient.")
     return 0
 

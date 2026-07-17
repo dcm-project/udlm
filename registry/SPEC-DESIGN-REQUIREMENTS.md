@@ -40,6 +40,19 @@ Each hard constraint cites the UDLM contract it derives from.
     (Realized/Discovered, provider-authored). Never blurred (the K8s spec/status discipline).
 14. **Realization is the authoritative system of record** for realized data — the basis of sovereignty
     and audit (`entities/resource-service-entities.md`).
+15. **Realization is two-phase — validate-and-reserve, then commit** (`foundations/four-states.md` §2.3a;
+    ADR-011). The Requested → Realized transition MUST **reserve** every target (validate + hold, **no
+    side effects**, returning computed realize-time facts) and reconcile the reserved graph to a fixed
+    point, MUST NOT **commit** (build) any target until the **whole reserved graph is held-and-valid and
+    all applicable policy is green** (the commit barrier), and MUST **release** any uncommitted hold on
+    failure/cancellation/TTL-expiry. Providers expose `reserve` / `commit` / `release`, all idempotent
+    (`contracts/provider-contract.md` §6a). This is what makes `fulfillment: provider` (ADR-009)
+    side-effect-free: cross-dependency criteria are computed against **reserved** facts before anything
+    is built. A `reserve` request carries a `requested_ttl` bounded by the provider-advertised
+    `min_hold_ttl` / `max_hold_ttl`; **TTL expiry is an implied release** and MUST emit
+    `reservation.expired`. DCM MUST **independently** time each hold (`reservation_reconcile_grace`) and,
+    if the provider misses that event, emit its own `reservation.expiry_unconfirmed` and force-resolve
+    by policy (`RELEASE_AND_NOTIFY_AFFECTED`) — a lapsed hold never resolves by silence.
 
 ### Portability & provider-neutrality
 15. The spec is the contract **any** provider of the type MUST satisfy; providers
@@ -245,6 +258,43 @@ Each hard constraint cites the UDLM contract it derives from.
     `registry/dcm-group.schema.json` (TEN-001/TEN-003, `entities/resource-grouping.md` §2.2;
     `foundations/data-model-core.md` §5 [D3]). **[enforced]** (`registry/tools/validate.py`;
     referential existence of the tenant is a store-level check, not a schema one).
+
+33. **One rule, one home, one ID — single-source.** Every normative rule, vocabulary, or
+    wire-shape is *defined* in exactly one file and carries a stable ID (`INF-001`, `ENT-006`,
+    `DPO-003`, …). Other documents **reference the ID; they never restate the rule** — a restated
+    rule is a second definition that drifts. (The 2026-07 sweep found the same rule defined up to
+    four ways, and ID families reused for unrelated meanings across files.) A rule-ID *defined* in
+    more than one file fails CI (`tests/check_single_source.py`); existing debt is grandfathered in
+    that check's baseline and burned down as the dedup PRs land, and a family split across files is
+    warned. When a rule must appear elsewhere, cite it by ID with a one-line gist
+    — the reference carries its own gist (e.g. `ADR-008 — the UDLM/DCM boundary test`), never a bare number. **[enforced]**
+    (`tests/check_single_source.py`) To find the home before you write, use the file
+    index (`docs/file-index.md`) — it names what each document owns.
+
+34. **A resource type's base is the resource's *portable definition*; provider-specific config is stored
+    extra** (ADR-016). The **base spec** carries the resource's **portable, standard-grounded config** — the
+    fields every provider of the type accepts (a container's `image`/`resources`/`command`/`args`/`ports`/
+    `mounts`) — plus its **graph-bearing** (`data_reference` / relationship / service-graph),
+    **audit/provenance/identity**, and **observability/drift** elements. The line is **portable vs
+    provider-specific**, not config-vs-not: portable config that defines the resource is base;
+    **provider-specific** config is declared by the provider, projected as a config interface DCM offers
+    (`contracts/provider-contract.md` §1a.3), and its **values stored** as provider-namespaced
+    `provider_extensions` (`PRV-010`) across Requested/Realized, portability-flagged. **DCM stores the config
+    *state* — base and extra — because it is the state system-of-record and drift is a diff; there is no
+    "store a pointer instead of the values".** The provider owns the *schema*; the *mechanism* stays out of
+    the substrate (DCM ADR-023); the *state* is always recorded. **Corollary:** every resource DCM manages
+    has a resource record type. **[enforced: review]**
+
+35. **Provider-neutral framing — model the fact, never dictate the mechanism.** A type models *what* a
+    fact is, never *how* or *by what* it is realized, and MUST NOT imply a particular mechanism or provider
+    is *the* or *preferred* way. (An IP address's origin is a field — `static`/`dhcp`/`link-layer`/`random`;
+    UDLM neither prescribes DHCP as the way to serve it nor names Kea/dnsmasq/BIND as the way to run it.)
+    Concrete providers appear only as **examples** ("e.g. …") or reference realizations — never as the type's
+    grounding, its normative text, or an adopted "the model." And **no estate/deployment-specific references
+    in the portable spec** (host names, a site's tool choice, `group_vars`, generator scripts) — those live
+    in the estate's own repo. Extends §17 (no provider-specific data in the universal spec). **[enforced:
+    review]** *(quality-sweep bar — audit every type's descriptions/adopts/roles for a dictated mechanism,
+    provider, or estate specific.)*
 
 ## Design principles (SHOULD)
 - **Minimal core, extensible at the edges** — don't over-model; add types via schema-sharing.

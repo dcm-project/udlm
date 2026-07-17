@@ -16,19 +16,41 @@ A type that needs a shared concept references the canonical shape here rather th
 
 ## 2. Canonical common elements
 
+> **Machine source:** these shapes are defined as JSON-Schema `$defs` in
+> [`registry/common-elements.schema.json`](common-elements.schema.json) — the normative, referenceable
+> version. A type `$ref`s a shape (`common-elements.schema.json#/$defs/<Name>`) rather than reinventing
+> it; this section is the prose companion (the §3 normalization plan's step 1 is now done).
+
 ### 2.1 `Quantity`
-A magnitude + explicit unit as one string. Pattern `^[0-9]+(\.[0-9]+)?(m|M|G|T|P|Mi|Gi|Ti|MB|GB|TB)?$`
-(aligns with the existing `compute.virtual-machine` `memory.size` and Kubernetes `resource.Quantity`).
+A magnitude + explicit unit as one string. Pattern `^[0-9]+(\.[0-9]+)?(m|[KMGTPE]i?B?)?$` — the
+Kubernetes `resource.Quantity` form: decimal SI (`K/M/G/T/P/E`), binary (`Ki/Mi/Gi/Ti/Pi/Ei`), optional
+trailing `B` (`MB`/`GiB`), or milli (`m`). Covers every existing type's memory/storage/capacity usage.
 Use for memory, storage, bandwidth, power (`"650W"`), etc.
 
 ### 2.2 `ComputeResources`  *(the keystone — currently divergent, see §3)*
 ```json
-{ "cpu":    { "count": 8 },
+{ "instance_size": "medium",          // OR provider-neutral size class (see below)
+  "cpu":    { "count": 8 },
   "memory": { "size": "32GB" } }      // Quantity
 ```
 Reused by anything that sizes compute: `Compute.VirtualMachine`, a `Compute.Cluster` node pool, a
 `Data.Database` instance. `vcpu`/`cores`/`memory_gib` are **non-canonical synonyms** — normalize to
 `cpu.count` + `memory.size`.
+
+**`instance_size` — sizing by class (shared vocabulary, provider-mapped).** Any resource type that sizes
+compute MAY carry an `instance_size` string — a **provider-neutral size class** (e.g. `small|medium|large|xlarge`,
+an ordinal scale) — *in place of, or alongside,* explicit `cpu`/`memory`. Two halves, and the split is the
+point:
+- **UDLM owns the conformity.** `instance_size` is a **shared, comparable vocabulary**: `medium` must mean
+  something *comparable* across adjacent compatible providers — the classes are ordinally ordered (a portable
+  "roughly this big"), so consumer intent is portable and a workload can move between compatible providers
+  without re-sizing. This is UDLM providing *conformity between providers*, not a free string.
+- **The provider owns the concrete mapping.** *How* `medium` resolves to cores/RAM, or to a `db.r5.large`, is
+  the **provider's** to define at naturalization (DCM ADR-023) — UDLM does not fix the resource math.
+
+So UDLM carries the comparable *shape* (the class vocabulary + its ordering); the provider fills the concrete
+*definition*. This lets a type ship sized-by-class (the common shape for managed databases, VMs, node pools)
+portably, without UDLM prescribing a fixed resource math.
 
 ### 2.3 `StorageCapacity` / disk
 ```json
@@ -92,28 +114,29 @@ supports **both at once** (SPEC-DESIGN-REQUIREMENTS §26):
   "64GB"`, `cpu.count: 16`) and MAY carry a structured inline inventory (`memory.modules[]`, `disks[]`).
   A consumer that only needs totals reads these; the **portable contract never requires** the component
   breakout.
-- **First-class entity (optional).** A `Hardware.*` resource — `Hardware.MemoryModule`,
-  `Hardware.StorageDevice`, `Hardware.NetworkInterface`, `Hardware.GraphicsProcessor`,
-  `Hardware.Processor` — `contained_by` the parent, for organizations that track components
-  **independently** (serial, slot, firmware, RMA, lifecycle, warranty). Whether these exist is governed
+- **First-class entity (optional).** A `Hardware.NetworkInterface` resource `contained_by` the parent (the one component UDLM keeps — it is *configured*, bond/bridge). Component-level memory/CPU/disk/GPU are **out of scope** (ADR-013 — DCM is not a hardware system-of-record); host capacity lives on the Compute host. Whether these exist is governed
   by **`composition_visibility`** (`opaque|transparent|selective`, `entities/service-dependencies.md`
   §11d): `opaque` → rollup only; `transparent` → every component an entity; `selective` → the org
   picks which.
 
-**The relationship (the keystone):** when components are entities, the parent's rollup is the
-**aggregate of its contained components** — `Compute.BareMetalInstance.memory.size = "64GB"` is the sum
-of two `Hardware.MemoryModule` entities (32GB each), each `contained_by` the host. The rollup is the
-authoritative realized value; the components reconcile against it, and a mismatch (parent reports 65GB,
-modules sum to 64GB) is **drift** — surfaced with provenance, never silently summed away. This is the
-same `transparent` composition that registers sub-resources as DCM entities (service-dependencies §11d),
-applied below the device boundary.
+**The relationship (the keystone):** where a component *is* a kept entity, it is `contained_by` the
+parent and reconciles against the parent's rollup. Post-ADR-013 the only such component is
+`Hardware.NetworkInterface` (DCM configures it — bond/bridge); a host's `nics[]` rollup and its
+`Hardware.NetworkInterface` entities describe the same interfaces, and a mismatch is **drift** —
+surfaced with provenance, never silently reconciled away. This is the same `transparent` composition
+that registers sub-resources as DCM entities (service-dependencies §11d), applied below the device
+boundary. For memory/CPU/disk/GPU there is **no component entity** to reconcile against: capacity is a
+rollup *attribute* of the Compute host (`memory.size: "64GB"`, `cpu.count: 16`), full stop — the sum is
+never re-derived from parts because the parts are out of scope (ADR-013).
 
-**Why both** — it lets a homelab declare `BareMetalInstance` with just a rollup today, and an enterprise
-asset-track every DIMM/GPU as a lifecycle entity tomorrow, **without changing the type** — only its
-`composition_visibility`. It also matches the adopted standards: Redfish exposes
-`ComputerSystem.MemorySummary.TotalSystemMemoryGiB` (rollup) **and** `/Memory/<id>` per-DIMM resources;
-Metal3 exposes `status.hardware.ramMebibytes` (rollup) + `nics[]`/`storage[]` arrays. The `Hardware.*`
-family is a registry addition tracked alongside the other new types.
+**Why the rollup is always present** — it lets a homelab and an enterprise alike declare a host with
+just its aggregate capacity, which is all placement needs. If UDLM ever needs to asset-track every
+DIMM/GPU as a lifecycle entity, that is the **deferred discovery-archetype** path (ADR-013 — a
+discovered-only asset outside the request catalog, or an external DCIM information-provider), *not* a
+`provisioning` component type. The rollup still matches the adopted standards: Redfish exposes
+`ComputerSystem.MemorySummary.TotalSystemMemoryGiB` and Metal3 `status.hardware.ramMebibytes`; the
+per-DIMM `/Memory/<id>` resources those standards also expose stay on the discovery/DCIM side of that
+boundary.
 
 ### 5a. Identity — distinguishing instances of the same type (SPEC-DESIGN-REQUIREMENTS §27)
 
@@ -186,8 +209,7 @@ partition_mechanism: sr-iov     # OPTIONAL; only when device_class=partition: sr
 | `aggregate` | a **composite of many** interfaces (N→1) | **bond / LACP LAG** (802.1AX) | `lower_layer` → the member NICs |
 | `bridge` | a **software L2 bridge over many** ports (N→1) | **Linux bridge / OVS bridge** (802.1Q) | `lower_layer` → the bridged ports |
 
-So a **vGPU** = `Hardware.GraphicsProcessor` `device_class: partition`, `partition_mechanism: mediated`
-(or `mig`), `parent_device` → the physical `Hardware.GraphicsProcessor`; an **SR-IOV VF / vETH** =
+The device-partition mechanism applies to interfaces (GPU partitioning is deferred — GPU is a host capability, ADR-013): an **SR-IOV VF / vETH** =
 `Hardware.NetworkInterface` `device_class: partition`, `partition_mechanism: sr-iov` (or `vlan`/`macvlan`),
 `parent_device` → the physical NIC. A **bond** = `Hardware.NetworkInterface` `device_class: aggregate`,
 `aggregation.mode: 802.3ad`, `lower_layer` → its member NICs; a **bridge** =

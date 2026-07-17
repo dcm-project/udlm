@@ -42,6 +42,11 @@ not) · `RETIRED` (was adopted, withdrawn) · `REJECTED` (evaluated, not adopted
 **Covers:** `RFC 3339` · **Body:** IETF · **Since:** first referenced 2026-05-27T01:33:19Z; ratified normative-with-patterns 2026-07-05 (common-elements §8) · **Where:** every time field in both schemas, estate records, `time_source` discipline.
 **Why:** auditable provenance requires unambiguous instants: UTC-normalized (`Z`), seconds minimum, clock attribution (`time_source`), no fabricated precision. RFC 3339 is the interoperable profile of ISO 8601 (bare ISO 8601 permits zone-less/reduced forms — the ambiguity we're eliminating). Regulatory precedent: MiFID II RTS 25 clock-sync discipline. **License:** IETF Trust — compatible-reference.
 
+### RFC 9457 (Problem Details for HTTP APIs) — CANONICAL
+**Covers:** `RFC 9457` · **Body:** IETF (via **AEP-193**) · **Since:** first referenced in `contracts/error-model.md` §2 (predates this entry); **registered 2026-07-15** — this backfills a register gap the standards-change audit found (the whole error surface conformed to RFC 9457 but the decision was never recorded). · **Where:** `error-model.md` §2 (the error envelope); referenced by `rate-limit-and-backpressure.md`, `retry-semantics.md`, and every interop error surface.
+**Why:** a shared, machine-readable error shape lets any conformant peer parse another's errors without per-realization adapters; RFC 9457 is the IETF standard for it (`type`/`title`/`detail`/`instance` + top-level extension members). Adopting it **retired** UDLM's former bespoke `error_code`/`message`/`audit_uuid`/`details` envelope (net-negative surface — error-model §2a). *Alternatives:* the bespoke envelope (reinvents a solved shape, no ecosystem — now RETIRED); gRPC `Status` (binary-first, off the REST surface). **License:** IETF Trust — compatible-reference.
+> **Retirement recorded:** the former bespoke UDLM error envelope is **RETIRED** in favour of this (error-model §2a). **AEP-193** (the AEP error model that adopts RFC 9457) is the adoption vehicle — register a dedicated AEP-193 entry if/when AEP standards get their own rows.
+
 ### RFC 9162 (Certificate Transparency v2 / Merkle logs) — CANONICAL
 **Covers:** `RFC 9162` · **Body:** IETF · **Since:** 2026-04-07T18:38:08Z · **Where:** `observability/universal-audit.md` AUD-006 (audit records form a Merkle tree; leaf signatures), `audit.log_head` in the instance schema.
 **Why:** tamper-evident audit for fsi/sovereign profiles needs an append-only structure with an established verification model; CT is the deployed-at-scale precedent. *Alternatives:* blockchain (consensus machinery we don't need), plain hash chain (no efficient inclusion proofs). **License:** IETF Trust — compatible-reference.
@@ -66,7 +71,7 @@ not) · `RETIRED` (was adopted, withdrawn) · `REJECTED` (evaluated, not adopted
 ## Hardware & platform
 
 ### DMTF Redfish — CANONICAL
-**Covers:** `Redfish` · **Body:** DMTF · **Since:** 2026-06-26T22:30:12Z · **Where:** 8+ Hardware/Compute/Network/Facility types (ComputerSystem, Processor, Memory, Drive, NetworkAdapter, Switch, Circuit); Bios + BiosAttributeRegistry (Hardware.BiosProfile); Manager + ComputerSystem.Reset (Hardware.BMC); PowerSupply (Hardware.PowerSupply); Location/Placement (Facility.Location).
+**Covers:** `Redfish` · **Body:** DMTF · **Since:** 2026-06-26T22:30:12Z · **Where:** Compute/Network/Facility types — ComputerSystem (host summary incl. aggregate memory/CPU/GPU capacity), NetworkAdapter, Switch, Circuit (Facility.PowerFeed); Bios + BiosAttributeRegistry (Hardware.BiosProfile); Manager + ComputerSystem.Reset (Hardware.BMC); Location/Placement (Facility.Location). (Per-component Processor/Memory/Drive/PowerSupply resources are out of scope — ADR-013; the host carries their rollup.)
 **Why:** the vendor-neutral hardware-as-asset vocabulary, and the one the estate's producers actually speak (Redfish-capable BMCs; used for bare-metal provisioning). *Alternatives:* IPMI (no data model), DMTF CIM (superseded by Redfish for REST-era use — PRIOR-ART). **License:** DMTF — compatible-reference.
 
 ### IEEE 802.1AX / 802.1Q / 802.1AB — CANONICAL
@@ -78,18 +83,26 @@ not) · `RETIRED` (was adopted, withdrawn) · `REJECTED` (evaluated, not adopted
 **Why:** interface stacking and overlay/underlay topology are *already standardized* by the IETF network-management models; adopting their names makes our records legible to anyone who knows YANG. *Alternatives:* invention (rejected). **License:** IETF Trust — compatible-reference.
 
 ### SNIA Swordfish — CANONICAL
-**Covers:** `SNIA-Swordfish` · **Body:** SNIA · **Since:** 2026-06-27T00:11:51Z · **Where:** Storage.Cluster (StorageSystem), Hardware.StorageDevice, Storage.Pool (StoragePool alignment).
+**Covers:** `SNIA-Swordfish` · **Body:** SNIA · **Since:** 2026-06-27T00:11:51Z · **Where:** Storage.Cluster (StorageSystem), Storage.Pool (StoragePool alignment).
 **Why:** the storage-domain extension of Redfish — same family as our hardware vocabulary. **License:** SNIA — compatible-reference.
 
 ### OpenZFS — CANONICAL
 **Covers:** `OpenZFS` · **Body:** OpenZFS project · **Since:** 2026-07-13 · **Where:** Storage.Pool (zpool/vdev topology, redundancy), Storage.Dataset (dataset/zvol, mountpoint, hierarchy, properties).
-**Why:** the host-local pool/dataset layer between physical drives (Hardware.StorageDevice/Redfish Drive) and cluster-provisioned volumes (Storage.Volume/Swordfish) had no vocabulary; OpenZFS is the one the producers actually speak (`zpool`/`zfs` on the fleet's storage hosts) and the de-facto standard for the pool→vdev→dataset shape. *Alternatives:* model a pool as Storage.Cluster (wrong — "cluster" is multi-node/distributed; a zpool is single-host) and a dataset as Storage.Volume (wrong — a Volume is a cluster-provisioned PVC/CSI claim, not a host-local hierarchy-bearing filesystem); both rejected as semantic overloads. Swordfish StoragePool aligns the capacity/redundancy fields (§storage family). **License:** CDDL-1.0 — compatible-reference (vocabulary referenced, no code).
+**Why:** the host-local pool/dataset layer between physical drives (Redfish Drive, on the discovery/DCIM side per ADR-013) and cluster-provisioned volumes (Storage.Volume/Swordfish) had no vocabulary; OpenZFS is the one the producers actually speak (`zpool`/`zfs` on the fleet's storage hosts) and the de-facto standard for the pool→vdev→dataset shape. *Alternatives:* model a pool as Storage.Cluster (wrong — "cluster" is multi-node/distributed; a zpool is single-host) and a dataset as Storage.Volume (wrong — a Volume is a cluster-provisioned PVC/CSI claim, not a host-local hierarchy-bearing filesystem); both rejected as semantic overloads. Swordfish StoragePool aligns the capacity/redundancy fields (§storage family). **License:** CDDL-1.0 — compatible-reference (vocabulary referenced, no code).
 
 ## Kubernetes / CNCF ecosystem
 
 ### Kubernetes vocabularies — CANONICAL
 **Covers:** `Kubernetes` `Kubernetes NetworkAttachmentDefinition` `Kubernetes well-known topology labels` `Kubernetes-Gateway-API` · **Body:** CNCF/Kubernetes SIGs · **Since:** 2026-06-27 (Gateway API, topology labels) → 2026-07-05 (NAD 02:10:32Z, batch Job 03:29:34Z) · **Where:** Network.Gateway (Gateway API), Topology (well-known labels), Network.VirtualNetwork (NAD attachment vocabulary), Automation.Job (batch/v1 run-to-completion semantics — `activeDeadlineSeconds` ≈ `max_execution_time`).
 **Why:** k8s is both a major producer and consumer in the estate (OCP) and the de-facto vocabulary source for cloud-native concepts; adopting its names keeps the DCM Provider boundary translation-free. Also adopted structurally elsewhere: `managedFields`/server-side apply is the model behind field `ownership` (R4). **License:** Apache-2.0 — compatible-reference.
+
+### Kubernetes ObjectReference / ownerReference (object-reference shape) — PATTERN
+**Covers:** `Kubernetes ObjectReference` · **Body:** Kubernetes (CNCF) · **Since:** 2026-07-14 (UDLM ADR-012) · **Where:** the data-reference shape `{ref_uuid, ref_name, reference_data_type}` (`registry/data-reference.schema.json`) — a field points at a governed Reference Data Layer instead of inlining a copy; `check_data_references` (`registry/tools/validate.py`) enforces referential integrity.
+**Why:** k8s already solved "how does one object point at another and stay honest": ownerReferences carry `uid` (authoritative) AND `name` (advisory), the GC resolves on `uid`, and a `uid` that resolves to nothing is a *dangling* edge — never a silent rebind onto a same-named record. We adopt exactly that shape (uuid-authoritative, name-advisory) and its deterministic invalid-edge handling (`OwnerRefInvalidNamespace` → our dangling-reference failure). **Pattern, not vocabulary:** the reference *shape* and integrity discipline, not the k8s field names or the multi-doc apply model. Grounded in `docs/research/minimal-custom-surface-and-graph-resilience.md` findings #1/#2. Convergent with our own uuid+handle discipline (`contracts/identifier-scheme.md`). **License:** Apache-2.0 — compatible-reference.
+
+### KubeVirt — CANONICAL
+**Covers:** `KubeVirt` · **Body:** CNCF · **Since:** 2026-07-13 · **Where:** Compute.VirtualMachine (VirtualMachine/VirtualMachineInstance — domain cpu/memory, interfaces->networks, volumes, runStrategy/power).
+**Why:** the k8s-native VM realization the estate actually runs (OpenShift Virtualization), the parallel to Metal3 for bare metal — Redfish ComputerSystem gives the vendor-neutral system+power shape, KubeVirt the realization vocabulary. *Alternatives:* OpenStack Nova (not the deployment reality), DMTF OVF (VM packaging/portability — PRIOR-ART, reference only). **License:** Apache-2.0 — compatible-reference.
 
 ### Metal3 — CANONICAL
 **Covers:** `Metal3` · **Since:** 2026-06-26T22:30:12Z · **Where:** Compute.BareMetalHost.
@@ -110,16 +123,24 @@ not) · `RETIRED` (was adopted, withdrawn) · `REJECTED` (evaluated, not adopted
 **Why:** RFC 2131 defines the protocol concepts; Kea is the estate's operational DHCP implementation and its config vocabulary names the operational objects. Kea is MPL-2.0 → **reference-only** verdict (vocabulary referenced, no text reproduction); RFC — compatible-reference.
 
 ### IETF DNS — RFC 1035 family — CANONICAL
-**Covers:** `IETF DNS` `RFC-1035` · **Since:** 2026-06-26T22:30:12Z · **Where:** Network.AddressService, Network.DNSZone.
+**Covers:** `IETF DNS` `RFC-1035` `RFC-3596` · **Since:** 2026-06-26T22:30:12Z · **Where:** Network.AddressService, Network.DNSZone (RFC 3596 = the AAAA/IPv6 resource record, part of the same DNS-RR family).
 **Why:** name-resolution vocabulary is IETF's; nothing to decide. **License:** IETF Trust — compatible-reference.
 
 ### Kerberos (RFC 4120) + LDAP (RFC 4511) — CANONICAL
-**Covers:** `RFC-4120` `RFC-4511` · **Since:** 2026-06-27T00:38:59Z · **Where:** Security.DirectoryService (the FreeIPA grounding: KDC + Directory).
-**Why:** directory services are these two protocols; FreeIPA/AD are providers. **License:** IETF Trust — compatible-reference.
+**Covers:** `RFC-4120` `RFC-4511` `RFC-4512` · **Since:** 2026-06-27T00:38:59Z · **Where:** Security.DirectoryService (the FreeIPA grounding: KDC + Directory; RFC 4512 = the LDAP directory information models, companion to the 4511 protocol).
+**Why:** directory services are these protocols; FreeIPA/AD are providers. **License:** IETF Trust — compatible-reference.
+
+### NMstate + IETF ietf-ip (RFC 8344) — host addressing & network config — CANONICAL
+**Covers:** `NMstate` `RFC-8344` · **Body:** nmstate.io (Red Hat) / IETF · **Since:** 2026-07-15 · **Where:** Network.IPAddress (`address` + `allocation`-as-`origin`, RFC 8344 `origin` = NMstate `ipv4/ipv6.address`), Network.ConnectionProfile (the NMstate interface schema by reference — state/ipv4/ipv6/vlan/link-aggregation/bridge/mac-vlan/routes/dns-resolver). Grounds the host-networking-as-data model (ADR-023).
+**Why:** the open standards converge on `{address, prefix, origin}` + parent-by-reference (RFC 8343/8344, NMstate, NetBox, Redfish) — the strongest adopt signal. NMstate is NetworkManager's **declarative** desired-state API — **Apache-2.0, a Red Hat project** (RHEL `network`-role backend, OpenShift Kubernetes-NMState operator) — and maps 1:1 to `NodeNetworkConfigurationPolicy.spec.desiredState`. Tier-2 adopt-by-reference: UDLM owns identity + the conformance pointer, NMstate owns the config body. **License:** NMstate Apache-2.0 — compatible-reference; RFC 8344 IETF Trust — compatible-reference.
+
+### OAuth 2.0 Rich Authorization Requests — RFC 9396 — PATTERN
+**Covers:** `RFC 9396` `RFC-9396` · **Body:** IETF · **Since:** registered 2026-07-15 (first referenced in `capability-discovery.md` §2.5). · **Where:** the capability-admission model — RAR is the structured `verb × domain` request shape behind `effective_capabilities` (`contracts/capability-discovery.md` §2.5; SPEC-DESIGN adopt-by-ref §22–23).
+**Why:** the provider-capability model needed a standard shape for "a request for authorization to do specific actions on specific resources"; RAR's typed `authorization_details` *is* our `verb × domain`, and it pairs with the IAM permission-boundary / OAuth-scope intersection semantics already adopted. **Adopt the mechanism (PATTERN), not a specific OAuth server.** *Alternatives:* plain OAuth scopes (flat strings, no resource/action structure), an invented request grammar (rejected on the don't-reinvent rule). **License:** IETF Trust — compatible-reference.
 
 ### NUT (Network UPS Tools) — CANONICAL
 **Covers:** `NUT` · **Since:** 2026-06-26T22:30:12Z · **Where:** Facility.PowerFeed (`ups.status` vocabulary).
-**Why:** the estate's actual UPS telemetry producer (NUT upsd/upsmon daemons); its status vocabulary is the de-facto open standard. **License:** GPL — reference-only.
+**Why:** the estate's actual UPS telemetry producer (NUT upsd/upsmon daemons); its status vocabulary is the de-facto open standard. **License:** GPL-2.0+ — reference-only.
 
 ### Ansible — CANONICAL
 **Covers:** `Ansible` · **Since (as adoption):** 2026-07-05T03:29:34Z (Automation.Job `process_type: playbook`); referenced in docs since 2026-04-07 · **Why:** playbook is the estate's dominant Process Resource form; the vocabulary names what actually runs. **License:** GPL-3.0 — reference-only.
@@ -156,6 +177,54 @@ not) · `RETIRED` (was adopted, withdrawn) · `REJECTED` (evaluated, not adopted
 
 ### OpenCost — CANONICAL
 **Covers:** `OpenCost` · **Since:** 2026-06-18T01:34:51Z · **Where:** Compute.Cluster cost fields, cost-sp provider. **Why:** the CNCF in-cluster cost implementation matching FOCUS-shaped output. **License:** Apache-2.0 — compatible-reference.
+
+## Orchestration & transactions
+
+### TCC (Try-Confirm-Cancel) + Two-Phase Commit (X/Open XA, ISO/IEC 10026 OSI-TP) — PATTERN
+**Covers:** `TCC` · `2PC` · **Body:** X/Open (XA DTP) · ISO/IEC 10026 (OSI-TP); TCC = established microservices distributed-transaction pattern · **Since:** 2026-07-13 (ADR-011).
+**Where:** two-phase realization — `contracts/provider-contract.md` §6a, `foundations/four-states.md` §2.3a, SPEC-DESIGN hard constraint 15.
+**Why:** realization spans providers that cannot share a lock, so it needs a reservation-based commit protocol: **Try = `reserve`** (tentative hold, no side effects), **Confirm = `commit`**, **Cancel = `release`**; DCM is the 2PC **coordinator**, providers are **participants** (a provider that cannot hold votes no by failing reserve), and the **commit barrier** is the global commit decision. **Pattern, not vocabulary:** we adopt the try/confirm/cancel + coordinator/barrier shape and map it onto the existing REST dispatch channel — we do **not** absorb XA's C API or WS-AtomicTransaction/WS-BusinessActivity SOAP envelopes (the transport is already defined). *Contrast — SAGA:* commit-then-compensate; reserve-first avoids most compensation (nothing is built before the barrier), so SAGA applies only to a partially-failed *commit* (`COMPENSATE_AND_FAIL`). **License:** open specifications — compatible-reference.
+
+### Lease (timeout-bounded reservation) — RFC 2131 (DHCP) as protocol precedent — PATTERN
+**Covers:** `Lease` · **Body:** IETF (RFC 2131); Gray & Cheriton (leases) · **Since:** 2026-07-13 (ADR-011).
+**Where:** reservation-hold TTL — `provider-contract.md` §6a (`requested_ttl` / `granted_ttl` / `min_hold_ttl` / `max_hold_ttl`), `reservation.expired` event.
+**Why:** a hold must not leak reserved capacity if reconciliation stalls. DHCP is the near-exact precedent — `DHCPOFFER` = reserve, `DHCPREQUEST`/`ACK` = commit, and **lease expiry = implied release** — which is precisely our TTL semantics (expiry auto-drops the hold and emits `reservation.expired` for audit). **License:** IETF Trust — compatible-reference.
+
+## Attestation, accreditation & sovereignty
+
+*Vocabulary + patterns for the accreditation model (`governance/accreditation-and-authorization-matrix.md`, `registry/accreditation.schema.json`) — adopted after the 2026-07-14 sovereignty-enforcement prior-art review (`docs/research/sovereignty-enforcement-prior-art.md`). The taxonomy cross-walk is matrix §3.10.*
+
+### W3C Verifiable Credentials Data Model 2.0 — CANONICAL (vocabulary)
+**Covers:** `W3C-VC` · **Body:** W3C · **Since:** 2026-07-14 · **Where:** the accreditation record's `proof` (`type`/`verification_method`/`proof_purpose: assertionMethod`/`proof_value`) and `trust_anchor`; the issuer→holder→subject→verifier spine (accreditor→provider→capability→DCM); `validFrom`/`validUntil` ≈ `issued_at`/`expires_at`; `credentialStatus` ≈ the verification/staleness block.
+**Why:** an accreditation *is* a verifiable credential — a signed, independently-verifiable claim by an authority about a subject. Adopting VC's field vocabulary makes our records verifiable by any VC-aware tool and names the parties the way the identity world already does. **Adopt-not-absorb:** we take the data-model vocabulary, not JSON-LD `@context` machinery or a specific proof suite. *Alternatives:* bespoke signature envelope (re-inventing a solved, standardized shape). **License:** W3C Recommendation — compatible-reference.
+
+### IETF RATS Architecture — RFC 9334 — CANONICAL (vocabulary + pattern)
+**Covers:** `RFC 9334` · **Body:** IETF · **Since:** 2026-07-14 · **Where:** the **two-gate** trust decision (matrix §3.7) = RATS's two appraisals (Evidence→Attestation-Result, then Result→policy); Attester/Verifier/Relying-Party ≈ provider/DCM-verifier/placement-gate; the **verification summary** (matrix §3.9) = a RATS **Passport-model** Attestation Result carried forward so each hop need not re-run the raw appraisal; Endorsement ≈ `trust_anchor`.
+**Why:** RATS is the IETF's model for exactly "verify evidence against policy, emit a portable result." Its **separation of verification (is the evidence authentic?) from appraisal (does it satisfy policy?)** is the precise justification for our two-gate split, and Passport-vs-Background-check names our per-hop re-attestation choice. **Pattern + vocabulary**, not wire formats (no EAT/CoRIM tokens). **License:** IETF Trust — compatible-reference.
+
+### NIST OSCAL / FedRAMP authorization model — PATTERN
+**Covers:** `OSCAL` · **Body:** NIST · **Since:** 2026-07-14 · **Where:** conformance-claims → SSP control-implementation self-assertion; accreditation → assessment-result/ATO; the `scope` boundary ≈ OSCAL **authorization-boundary**; delegation (matrix §3.9) ≈ **leveraged-authorization** (inheriting a provider's existing ATO); gap records (matrix §3.5) ≈ **POA&M**.
+**Why:** OSCAL is the government-scale precedent for "declared control implementation vs assessed/authorized," and its authorization-boundary + leveraged-authorization concepts are exactly our scope + delegation shapes. **Pattern:** we adopt the conceptual model (declare→assess→authorize, bounded, leverageable), not the OSCAL JSON/XML catalog format. **License:** NIST (public domain) — compatible-reference.
+
+### Gaia-X Trust Framework — PATTERN
+**Covers:** `Gaia-X` · **Body:** Gaia-X AISBL · **Since:** 2026-07-14 · **Where:** the **conformance_claims** self-declaration = Gaia-X **self-descriptions** (provider-authored VCs); `trust_anchor` = Gaia-X **Trust Anchors** / GXDCH clearing; the layered strictness in profiles (dev→sovereign) ≈ **Label Levels L1/L2/L3**; the "declaration-and-placement layer, not a byte enforcer" framing is Gaia-X's own posture.
+**Why:** Gaia-X is the closest existing system to what this model is — federated, self-described, trust-anchored sovereignty attestation for cloud providers — and validated the architecture (three-party spine, self-description-then-verify, no central byte enforcement). **Pattern:** conceptual alignment; we don't consume the Gaia-X ontology or credential-event service. *Related:* EUCS assurance levels (PRIOR-ART, informed the plane/level axes). **License:** Gaia-X (open) — compatible-reference.
+
+### SLSA + in-toto (per-hop attestation match) — PATTERN
+**Covers:** `SLSA` `in-toto` · **Body:** OpenSSF / CNCF · **Since:** 2026-07-14 · **Where:** per-hop re-attestation down the fulfillment graph (ADR-004 §4, matrix §3.3.1) = in-toto's **layout step MATCH** at each link; delegation (matrix §3.9) ≈ SLSA **VSA** (Verification Summary Attestation — "someone I trust already verified this").
+**Why:** supply-chain attestation independently arrived at the same rule we need — **trust is re-checked at every hop, never inherited**, and a verifier can emit a summary others rely on. Confirms the propagation design and names the delegation dial. **Pattern:** the match/summary shape, not the predicate formats. **License:** Apache-2.0 — compatible-reference.
+
+### ISO 3166 (jurisdiction hierarchy) — CANONICAL (vocabulary)
+**Covers:** `ISO 3166` · **Body:** ISO · **Since:** 2026-07-14 · **Where:** `geographic_scope` / `operating_jurisdictions` (ISO 3166-1 country) and `data_residency_zones` down to ISO 3166-2 subdivisions (US → US-MN); the **residency-subsumes / sovereignty-exact** rule (matrix §3.8) keys off this hierarchy.
+**Why:** residency subsumption ("a US accreditation covers US-MN") requires a standard containment hierarchy of jurisdictions; ISO 3166 is it. **License:** ISO (code lists referenced) — compatible-reference.
+
+### eIDAS / trust-service-provider model — PRIOR-ART
+**Since (evaluated):** 2026-07-14 · **Where:** informed the `trust_anchor.type: eidas_tsp` option and the qualified-vs-non-qualified distinction behind trust-anchor typing.
+**Why:** eIDAS is the EU legal framework for qualified trust services (the TSPs that would issue real sovereignty credentials); referenced as an anchor type, no conformance relationship. Recorded so the `eidas_tsp` anchor option has a provenance. **License:** EU regulation (referenced).
+
+### SPIFFE / SPIRE — PRIOR-ART
+**Since (evaluated):** 2026-07-14 · **Where:** informed TODO #25 (JIT credential mechanism — short-lived SVID-like credentials issued at reserve/commit) and the workload-identity framing of credential-reference passing (TODO #24).
+**Why:** SPIFFE/SPIRE is the deployed model for short-lived, attested workload identity — the reference design for the JIT-credential follow-on, not yet an adoption. Recorded to anchor #24/#25. **License:** Apache-2.0 (referenced).
 
 ## Prior art (informed decisions; no conformance relationship)
 
