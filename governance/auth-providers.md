@@ -24,7 +24,7 @@ UDLM defines a unified **auth capability**. Authentication/authorization is a **
 1. **Authentication** — is this identity who they claim to be?
 2. **Authorization** — what is this identity permitted to do?
 
-Every authentication mode UDLM admits — static API key, local users, GitHub OAuth, LDAP, FreeIPA, Active Directory, OIDC, mTLS — is a way a provider exercises the auth capability. The built-in auth capability is a substrate-required default that any conformant realization MUST ship with, enabling immediate evaluation and home-lab use without requiring an external identity system. Externally-provided auth is a registered artifact, versioned, lifecycle-managed, and audited. The realization **consumes** this capability (including for its own user auth) the same way it consumes any other yield — it brokers/consumes; it does not have to *be* the authenticator (DCM `ADR-022`).
+Every authentication mode UDLM admits — static API key, local users, GitHub OAuth, LDAP, FreeIPA, Active Directory, OIDC, mTLS — is a way a provider exercises the auth capability. The built-in auth capability is a substrate-required default that any conformant realization MUST ship with, enabling immediate evaluation and home-lab use without requiring an external identity system. Externally-provided auth is a registered artifact, versioned, lifecycle-managed, and audited. The realization **consumes** this capability (including for its own user auth) the same way it consumes any other yield — it brokers/consumes; it does not have to *be* the authenticator (DCM `DCM ADR-022`).
 
 **Authentication is always required — there is no anonymous access in any UDLM profile.** The difference between profiles is how much effort authentication setup requires, not whether it exists.
 
@@ -54,6 +54,20 @@ Authentication and credential issuance are **capabilities** (yields) a provider 
 | **Telemetry** | telemetry descriptor | Metrics/logs/events for hosted resources |
 
 A Composite Service is not a kind — it is a Service Provider registering a multi-resource definition. There is no `auth_provider`, `credential_provider`, or `notification_service` *kind* — those are capabilities a kind exercises.
+
+> **Identity-model authority (UDLM vs a realization's auth architecture).** This document and the
+> `Identity.*` types (`Identity.Person` / `Identity.ServiceAccount` / `Identity.Group`, ADR-RBAC-001)
+> are the **authoritative data contract** for actors/identities and the actor-type vocabulary (incl. the
+> `provider` actor). A realization's authentication *implementation* — e.g. DCM's IDM/IAM Authentication
+> Layer (`dcm-project/enhancements/.../authentication/authentication.md`: Keycloak/IdP, middleware,
+> OpenAPI security, flows, and its internal `Actor`/`Actor Identity` tables + status enforcement) — is
+> **realization architecture** (ADR-008): it owns *how* actors authenticate and the external-identity
+> binding/session/status state, which are deliberately **not** substrate data. Where the two meet — the
+> actor/identity entity itself — **UDLM is authoritative**: a realization's `Actor` record is the
+> *realized projection* of `Identity.Person`/`ServiceAccount`, and MUST reuse the UDLM identity types and
+> actor-type vocabulary (`person` / `service_account` / `group` / `provider`) rather than define a parallel
+> identity model. UDLM carries the contract that supports authentication; it does not prescribe the
+> implementation.
 
 ---
 
@@ -91,7 +105,7 @@ auth_provider_registration:
   # What actor types this provider can authenticate
   authenticates: [human, service_account, webhook_service_account]
 
-  # Trust level — closed substrate vocabulary. PLATFORM-ADMIN-ASSIGNED, not self-declared (ADR-022):
+  # Trust level — closed substrate vocabulary. PLATFORM-ADMIN-ASSIGNED, not self-declared (DCM ADR-022):
   # trust_level gates whether this provider's authz decisions are re-evaluated, so it is an
   # authorization input. In a self-service or federated registration a trust_level in the payload is
   # IGNORED — only a platform admin sets it (default: advisory). Mirrors the dcm_registration_verdict
@@ -357,7 +371,7 @@ auth_provider_chain:
 
 ## 6. Credential Types and Issuance (Data Model)
 
-A **Credential Provider** is a substrate-defined provider type — a cross-cutting dependency that any realization component or provider registration references for secret resolution. The substrate REQUIRES that credentials are never stored directly by the realization; they are always referenced.
+Credential issuance is a **capability** a provider declares (`credential_capability` + `Credential.*` resource types — [credentials.md](credentials.md) §9), **not** a separate provider kind (§2; PROV-002/PROV-003 capability-not-kind). "Credential Provider" here means *a provider that declares that capability* — a cross-cutting dependency any realization component or provider registration references for secret resolution. The substrate REQUIRES that credentials are never stored directly by the realization; they are always referenced. The canonical capability declaration (assurance, attestation, credential types, secret engines) is defined once in [credentials.md](credentials.md) §9; the block below adds only the backend-connection specifics.
 
 ```yaml
 credential_provider_registration:
@@ -376,8 +390,11 @@ credential_provider_registration:
     auth_method: <kubernetes|approle|token|aws_iam|ldap>
     namespace: <vault namespace>
 
-  credential_types: [hmac_secret, api_key, certificate, connection_string,
-                     bearer_token, private_key, username_password, ldap_bind]
+  # Credential types this backend can issue — drawn from the CLOSED substrate vocabulary in
+  # credentials.md §2; this list does NOT redefine it. Backend-flavored names fold into canonical
+  # types (nothing lost): a connection_string / username_password / ldap_bind / hmac_secret is a
+  # `secret`; a bearer token is a `service_account_token`; a raw private key is `ssh_key`/`signing_key`.
+  credential_types: [api_key, x509_certificate, ssh_key, secret, signing_key, service_account_token]
 
   health_check:
     interval_seconds: 60
