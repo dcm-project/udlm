@@ -26,13 +26,15 @@ called out below and are **not** 1.0 spec gaps.
 ## 2. Profile posture — implement dev/eval, architect for sovereign/fsi
 
 The architecture and wire contracts are **identical across profiles**; only the required *floor*
-differs (DCM ADR-007 — a profile is a composed set with a floor, not a level). The five built-in
+differs (DCM ADR-007 — a profile is a composed set with a floor, not a level). The six built-in
 profiles are now defined as `policy_profile` records (`registry/instances/profile-*.yaml`), floors
-nesting by set-containment (`docs/profile-resolution.md`):
+nesting by set-containment (`docs/profile-resolution.md`). **dev** and **homelab** are on-ramp
+siblings (small substrate, low ceremony), not rungs on the production ladder:
 
 | Profile | Role | Floor adds (over the one below) |
 |---|---|---|
 | **dev** (default) | **September implementation / evaluation target** | baseline: structural validation, tenant isolation, resolved-profile eval, append-only audit, four-state; causal-only time; no attestation |
+| **homelab** | **single-operator on-ramp (community/value/feedback — ADR-017)** | dev's substrate + drift/recovery/discovery pre-tuned *on* at low ceremony via `operational_config`; governance-matrix/attestation/merkle available but not mandated (nothing shut off) |
 | standard | baseline production | governance-matrix, recovery, drift reconciliation |
 | prod | hardened production | blast-radius impact (ADR-010), dual-approval-destructive, bounded convergence |
 | **fsi** | regulated (architected, not the impl target) | Merkle transparency audit, attestation-gated admission, override-approval, regulatory retention, attested time |
@@ -89,11 +91,14 @@ by the merged spec (ADR-010 / §8.1a / realized-entity) or are DCM-runtime by th
 
 The surface is complete (§3–§4). Remaining before the tag (`VERSIONING.md` "Cutting the spec 0.1→1.0"):
 
-1. **Ratify the decisions.** All 11 `docs/adr/` records and 9 `registry/instances/adr-*.json`
-   DecisionRecords are `Proposed`; 1.0 commits to backward-compat and cannot ship on unratified
-   decisions. **Ready to ratify** (settled, exercised by the 21 UCs): ADR-005, ADR-006, ADR-007,
-   ADR-008, ADR-009, ADR-010, ADR-011, and the provider/boundary DecisionRecords (PROV-001/002/003,
-   RBAC-001, udlm-dcm-boundary, resource-type-extension). Review-then-accept is the maintainer's call.
+1. **Ratify the decisions.** All `docs/adr/` records (now **ADR-001–016** — the 2026-07-15 session added
+   012 data-references, 013 hardware-component-scope, 014 optionality-with-conformity, 015
+   settings-and-config-bundles, 016 resource-type-role) and the `registry/instances/adr-*.json`
+   DecisionRecords are `Proposed`; 1.0 commits to backward-compat and cannot ship on unratified decisions.
+   **Ready to ratify** (settled, exercised by the 21 UCs): ADR-005–011 and the provider/boundary
+   DecisionRecords (PROV-001/002/003, RBAC-001, udlm-dcm-boundary, resource-type-extension). The
+   2026-07-15 additions (013–016) ratify once their PRs merge (#88 / #95 / #97). Review-then-accept is
+   the maintainer's call.
 2. **Finish the load-bearing draft contract.** `contracts/schema-sharing.md` (Draft) defines the
    `/.well-known/udlm/schema-bundle` the conformance surface depends on — bring to Complete. The other
    drafts (`error-model`, `time-and-clock`, `retry-semantics`, `rate-limit-and-backpressure`) are
@@ -112,12 +117,33 @@ The surface is complete (§3–§4). Remaining before the tag (`VERSIONING.md` "
   `retry-semantics`, `rate-limit-and-backpressure`: finish or mark stable-by-reference before tag.
 - **Per-type `stability` field** — coarse maturity signal while the spec is `0.x`; deferred candidate
   (`SPEC-DESIGN-REQUIREMENTS`).
-- **Type completeness polish** — `Software.Service`, `Hardware.BMC`, `Hardware.BiosProfile` carry no
-  `relationships` block; 4 types are `portability: partial`. Non-blocking for the 21 UCs.
+- **Type completeness polish** — `relationships` blocks **added** to `Software.Service` / `Hardware.BMC` /
+  `Hardware.BiosProfile` (#98, 2026-07-15); `Security.CredentialRef` **defined** (#99, closing the
+  referenced-but-undefined secrets-as-reference target). **Remaining:** 4 types are `portability: partial`
+  (checked: `bmc`/`software.service` promoted to `portable`, `bios-profile` stays `partial` — its
+  attributes are an opaque vendor passthrough). The `Credential.*` resource types (`credentials.md §2`) are
+  **deferred by design, not a gap** — credential values never enter UDLM, so the reference model
+  (`Security.CredentialRef` + `credential_record`) covers 1.0 the way Kubernetes covers it (one `Secret` +
+  a `type` discriminator). A future *requestable-credential* UC would split by **lifecycle** (Secret /
+  Certificate / Key — the Key Vault / cert-manager pattern), never one type per `credential_type`.
+- **Final resource-type quality sweep** (planned, once the type set stabilizes) — a human review pass over
+  *every* type/definition/spec for: **adopt-not-invent** (T5 — grounded in a real standard, registered),
+  **best-practice** shape, **no duplication** (single-source), and **concise, correctly-scoped docs**
+  (ADR-016 — models the graph/audit/portable-definition, delegates provider config). Tooling is already in
+  place (single-source guards, standards register, SPEC-DESIGN §34); this is the deliberate sweep on top.
+- **How-to guides + worked examples** (planned, *after* the data is polished) — consumer/operator how-tos
+  and per-type examples (`docs/`, `registry/examples/`), authored once the type set is stable.
 
 ## 7. The 1.0 surface (inventory)
 
-38 resource types · 12 record schemas · 17 contracts (11 complete/stable, 6 draft — see §5/§6) ·
-11 prose ADRs (001–011) + 9 JSON DecisionRecords · foundations/lifecycle/governance/design-principles
-doc set · 5 built-in profiles. `conforms_to: udlm/0.1` on every type + schema today; the tag re-stamps
-to `udlm/1.0` (§5.4).
+**~34 resource types** (post-2026-07-15: ADR-013 removes the 5 hardware-*component* types —
+memory-module / processor / storage-device / graphics-processor / power-supply, #88 — keeping
+BMC / BiosProfile / NetworkInterface; `Security.CredentialRef` added, #99) · 12 record schemas ·
+17 contracts (11 complete/stable, 6 draft — see §5/§6) · **16 prose ADRs (001–016)** + JSON
+DecisionRecords · foundations/lifecycle/governance/design-principles doc set · 6 built-in profiles.
+
+Plus the 2026-07-15 **recurrence-prevention layer**: SPEC-DESIGN **§33** (single-source) / **§34**
+(resource-type role, ADR-016), the guards `tests/check_single_source.py` · `check_profile_tables.py` ·
+`check_standards_registered.py`, and the indices `docs/file-index.md` · `registry/profile-settings-index.md`.
+
+`conforms_to: udlm/0.1` on every type + schema today; the tag re-stamps to `udlm/1.0` (§5.4).
