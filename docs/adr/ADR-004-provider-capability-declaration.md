@@ -1,72 +1,60 @@
-# UDLM ADR-004: Provider capability declaration (topology + mobility + operational)
+# UDLM ADR-004: Provider capability declaration (topology + mobility + operational + sovereignty)
 
 **Status:** Proposed
-**Date:** 2026-06-27
+**Date:** 2026-06-27 (amended 2026-07-14 — blocks scoped per capability, not per provider; sovereignty added)
 **Type:** Architecture Decision Record (a `DecisionRecord` with architecture scope — `entities/knowledge-family.md` §4.5)
-**Related:** ADR-001 (`Topology`), ADR-003 (data mobility + process validation); `registry/provider-adopted-standards.schema.json` (existing provider declaration); `contracts/provider-contract.md`; DCM ADR-005 (Provider Abstraction — capability declarations + bidirectional discovery), **DCM ADR-019 (Placement Policy)**
-**Tracking:** placement-data family — "providers must declare capabilities/compatibility with topology and data portability/migration, to satisfy placement and operational/SRE policies."
+**Related:** ADR-001 (`Topology` — the abstract domains this declares fulfillment *of*); ADR-003 (data mobility — `mobility` derives from §3); ADR-PROV-002 (capabilities are `(verb × domain)` categories — the scoping this aligns to); ADR-009/010/011 (how a per-capability sovereignty constraint propagates down the fulfillment graph and is proven at the reserve/commit barrier); DCM ADR-022 (trust/attestation); `governance/accreditation-and-authorization-matrix.md` §3.3/§3.3.1 (the accreditation record + the 1-1 match / binding-grain rules); `registry/provider-adopted-standards.schema.json` (the declaration schema — the exact field structure); `contracts/provider-contract.md` §2/§8.1a; DCM ADR-005, **DCM ADR-019 (Placement)**.
+**Tracking:** placement-data family — providers must declare topology/mobility/operational/sovereignty capability to satisfy placement + operational/SRE policies.
 
 ## Context
 
-`Topology` (ADR-001) and `data_mobility` (ADR-003) are **consumer-side** abstractions. They only resolve if **providers declare what they can actually offer**: which topology dimensions they expose, which jurisdictions they cover, what migration methods/guarantees they support, and which operational primitives (drain, online-migrate, rehearsal) they implement. Placement *matches* consumer requirements ↔ provider capability; operational/SRE policies *key off* the operational primitives. UDLM already has a provider declaration artifact (`registry/providers/*` validated by `provider-adopted-standards.schema.json`) and DCM already declares "providers declare capabilities" (ADR-005) — this generalizes that declaration.
+`Topology` (ADR-001) and `data_mobility` (ADR-003) are consumer-side abstractions; they only resolve if **providers declare what they can offer** — which topology dimensions, jurisdictions, migration guarantees, and operational primitives (drain, online-migrate, rehearsal). Placement matches consumer requirements ↔ provider capability; operational/SRE policies key off the primitives. UDLM already has a provider declaration (`provider-adopted-standards.schema.json`); this generalizes it.
 
 ## Decision
 
-Generalize the provider declaration into a **provider capability declaration** — the provider-authored record of what it can satisfy. It carries the existing `adopted_standard_support` plus three new capability blocks. It is a **provider declaration (data)**, not a resource type; matching/negotiation against consumer requirements is **Policy** (the Placement Engine + operational policies).
+### 1. A provider capability declaration — data, not a type
 
-### 1. `topology_capability` — the topologies a provider can *fulfill* (compat with ADR-001)
-**A provider does not author a `Topology` instance — it declares the topologies it can *fulfill*, as a capability.** (The concrete `Topology` instance — the actual domains — is realized/discovered, a separate artifact from this declaration; ADR-001.) Matched against a workload's abstract topology constraints.
-```json
-"topology_capability": {
-  "kinds_supported": ["region","zone","host","power-domain"],   // separation it can GUARANTEE
-  "native_mapping":  { "zone": "aws-az", "host": "hypervisor" },// native → abstract kind (naturalization)
-  "jurisdictions":   ["us","eu"],                                // residency/sovereignty coverage
-  "max_separation":  "zone",                                     // strongest anti-affinity it can promise
-  "reference_topologies": ["ha-3zone","single-zone"]             // optional: named topology archetypes it can fulfill
-}
-```
-This is the provider-declared side of ADR-001's "providers declare how their native topology fills the abstract kinds." A provider with no failure-domain concept declares `kinds_supported: []` → fails the capability filter for any spread constraint (correct). `reference_topologies` lets a provider advertise fulfillment of **named topology archetypes** (a future reference-topology catalog); the primitive capabilities (kinds / separation / jurisdictions) are the floor matching always uses.
+Alongside the existing `adopted_standard_support`, the provider declares, **per capability**, four blocks: `topology_capability` (the abstract topologies it can *fulfill* — not a `Topology` instance, ADR-001), `mobility` (migration methods/guarantees per resource type; the mechanism stays provider-internal, ADR-003 §3), `operational_capability` (SRE primitives — drain/online-migrate/rehearsal/health-reporting), and `sovereignty` (§3). It is provider **data**; matching/negotiation is **Policy** (Placement Engine + operational policies). Field shapes are in `provider-adopted-standards.schema.json`.
 
-### 2. `mobility` — data portability / migration capability (from ADR-003 §3)
-```json
-"mobility": [
-  { "resource_type": "Data.Database", "methods": ["online-streaming","snapshot-ship"],
-    "guarantees": { "rpo_min": "0s", "cross_region": true, "online": true } }
-]
-```
-Matched against the consumer's `data_mobility` requirements. The *mechanism* stays provider implementation (unmodeled).
+### 2. Blocks are scoped per capability, finest-granularity-wins — not per provider
 
-### 3. `operational_capability` — SRE-pattern primitives
-What the provider supports so operational policies / SRE patterns can rely on it:
-```json
-"operational_capability": {
-  "drain": true,                 "maintenance_mode": true,
-  "online_migrate": true,        "rolling_update": true,
-  "rehearsal_support": ["simulated","rehearsal"],   // enables ADR-003 / T6 validation
-  "health_reporting": ["domain","resource"]          // feeds fault-domain gating + Topology.outputs
-}
-```
-Fault-domain maintenance gating, rehearsal-based process validation (T6), and rolling cutover all require these primitives; if a provider can't `drain`, the SRE pattern that depends on draining can't be promised on it.
+A provider's capabilities are `(verb × domain)` categories (ADR-PROV-002), and these blocks **legitimately differ per category**: `realize_resources/Compute` may guarantee `zone` separation and online-migrate while `realize_resources/Storage` guarantees only `rack` and cannot drain. A single provider-wide `max_separation` or `drain: true` is wrong the moment a provider offers more than one thing. So a block is declared **on each capability**, overriding an optional provider-level default; the per-capability value is what placement/policy matches — the provider block is the default, never the ceiling. This aligns with §8.1a capacity advertisement (already per capability) and with `mobility` (already resource-type-scoped).
 
-## How it's consumed (matching, not just storage)
+**The versioned, accreditable unit is coarser than the per-category grain.** Identity, `version`, and accreditation attach to a capability that may span more than one `(verb × domain)` category, while topology/sovereignty vary *within* it per category. The exact nesting (an offering that contains category blocks vs a flat per-category list) is a **schema decision** (`provider-adopted-standards.schema.json`), not settled here; this ADR fixes only that blocks are per-category + finest-wins, and that the accreditable/versioned unit is distinct from the category grain.
 
-- **Placement** (DCM ADR-019): filter/score providers by `topology_capability` (can it satisfy the abstract spread/anti-affinity/jurisdiction?) + `mobility` (can it meet `data_mobility`?). This is the capability filter extended to topology + mobility.
-- **Operational / SRE policies**: gate on `operational_capability` — e.g. "critical workloads only on providers with `online_migrate` + `rehearsal_support` + `drain`."
-- **Process validation** (T6): `rehearsal_support` is what makes the mobility claim *validatable*; an un-rehearsable provider can't carry a fresh resilience claim.
+### 3. Sovereignty is a claim, trusted only by a 1-1 accreditation match
 
-Capability declaration says what's **possible**; the `Topology` instance (ADR-001) is the **concrete** graph the provider contributes; placement uses the former to negotiate and the latter to place.
+A per-capability `sovereignty` block overrides the provider-wide `sovereignty_declaration` (finest wins) — residency differs by what is realized (Compute EU-only, Storage global). It is a **CLAIM**; trust requires a **1-1 match** with an accreditation attesting **exactly** its scope — provider × capability × jurisdiction. **No partial or inherited credit:** an unmatched claim is `self_asserted` and not honored for sovereign/restricted placement. The accreditation record carries the explicit scope, and the match + binding-grain rules live in `governance/accreditation-and-authorization-matrix.md` §3.3/§3.3.1. (`topology_capability.jurisdictions` is the *placement* input — where it can spread; `sovereignty` is the *authorization* stance for the same category — reconciled, not duplicated.)
 
-## Data · Policy · Provider (required lens — SPEC-DESIGN §29)
-- **Data (UDLM):** the provider capability declaration shape — `topology_capability` + `mobility` + `operational_capability`.
-- **Policy (DCM):** matching/scoring/gating consume it (ADR-019/020) — requirements ↔ capability negotiation.
-- **Provider:** **authors** the declaration and **executes** what it declares (naturalization, migration, rehearsal).
+### 4. A per-capability sovereignty claim is a pipeline-wide obligation
+
+Declaring sovereignty at the capability scope obligates the provider to **guarantee it the whole way down that capability's realization pipeline** — every brokered dependency (ADR-009), sub-processor, and downstream hop must satisfy the same stance, **re-attested 1-1 at its own hop**. The *constraint* propagates along the fulfillment/dependency graph (ADR-009/010); **trust never inherits** — only the constraint does. It is proven across the reserved graph at the commit barrier (ADR-011), before anything is built. This is a *stronger* commitment than provider-scope and MUST be available. Enforcement is platform policy (DCM, ADR-022); UDLM carries the propagation + per-hop-attestation data (ADR-008 boundary).
+
+### 5. Determinism is a configurable platform-admin dial
+
+How deterministic an accreditation binding must be is org/platform policy (profile-governed), not a fixed rule: **per provider** (survives capability changes) · **per capability category** (survives version bumps) · **per exact `(capability_uuid, version)`** (a capability change is a new version the accreditation does not cover, so the claim reverts to `self_asserted` until re-attested). To enable the strict grain, each capability carries a stable `capability_uuid` + immutable `version`; `provider.capability_changed` (provider-contract §6) fires accreditation re-evaluation. Grains + expiry: `accreditation-and-authorization-matrix.md` §3.3.1.
+
+### 6. Boundary (ADR-008)
+
+The declaration shape, the four blocks' wire meaning, and the sovereignty-claim vocabulary are **UDLM** — a peer must read them identically. The matching/scoring, the 1-1 reconciliation, placement, and pipeline enforcement are **DCM**.
 
 ## Options considered
-- **Implicit/undeclared capability (discover at runtime only)** — rejected: placement and SRE policies need to match *before* committing; declaration enables negotiation + conformance.
-- **A new capability resource type** — rejected: this is a **provider declaration** (extends the existing one), not a managed resource — consistent with the adopted-standards declaration and DCM ADR-005.
-- **Generalize the provider declaration with topology + mobility + operational blocks** — **chosen.**
+
+- **Undeclared capability (discover at runtime only)** — rejected: placement/SRE must match *before* committing; declaration enables negotiation + conformance.
+- **A new capability resource type** — rejected: this is a provider declaration (extends the existing one), not a managed resource.
+- **Provider-wide blocks (the pre-amendment shape)** — rejected: wrong for any multi-capability provider (Compute ≠ Storage).
+- **Sovereignty trust = the claim alone, or claim ∩ attestation (intersection)** — rejected: trust requires a **1-1** claim↔accreditation match; no partial credit.
+- **A fixed determinism/binding grain** — rejected: it is a platform-policy dial (dev lax, sovereign/fsi strict).
+
+## Data · Policy · Provider (required lens — SPEC-DESIGN §29)
+
+- **Data (UDLM):** the per-capability declaration (topology/mobility/operational/sovereignty), each capability's `capability_uuid` + `version`, and the accreditation record's explicit scope.
+- **Policy (DCM):** matching/scoring/gating (ADR-019/020); the 1-1 claim↔accreditation reconciliation that decides *trusted* residency; the binding-grain + pipeline-propagation enforcement.
+- **Provider:** authors the declaration, executes it (naturalization, migration, rehearsal), and — for a per-capability sovereignty claim — guarantees it down the whole pipeline.
 
 ## Consequences
-- Extend `provider-adopted-standards.schema.json` → a **provider capability declaration** schema (adds `topology_capability`, `mobility`, `operational_capability`); existing `adopted_standard_support` unchanged.
-- Closes the loop: consumer requirements (`Topology` constraints + `data_mobility`) ↔ provider capability ↔ Policy matching/gating. Placement, sovereignty, fault-domain gating, and process validation (T6) all negotiate against one declaration.
-- DCM side (separate ADR): the matching/scoring + operational gating that consume this.
+
+- **Schema (follow-on, not yet implemented):** extend `provider-adopted-standards.schema.json` — the four blocks + accreditation binding nested per capability, with `capability_uuid`/`version`; the exact nesting is settled there. A new `accreditation.schema.json` encodes the §3.3 record.
+- **All provider "what I can do for X" data is uniformly per capability** (capacity §8.1a, topology, mobility, operational, sovereignty) — a multi-capability provider is never one global claim.
+- **Sovereignty is a propagating constraint, not a static field** — guaranteed down the pipeline, re-attested 1-1 per hop, proven at the reserve/commit barrier.
+- DCM side (separate ADR): the matching/scoring, 1-1 reconciliation, and pipeline enforcement that consume this.
