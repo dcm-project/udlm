@@ -1,0 +1,25 @@
+# Registry validation — every type spec must validate against the meta-schema
+# (tests/validate_registry.py: JSON Schema 2020-12 + $id↔version/conforms_to cross-checks).
+name: validate
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  validate-registry:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install jsonschema pyyaml
+      - run: python3 tests/validate_registry.py
+      - run: python3 tests/check_estate_tokens.py
+      - run: python3 tests/check_session_narration.py
+      - run: python3 tests/check_model_vocabulary.py
+      - run: python3 tests/check_definition_single_source.py
+      - run: python3 -c "compile(open('registry/tools/compat-check.py').read(), 'compat-check.py', 'exec')"
+      # Real §9 gate: every changed type spec must declare a sufficient version bump
+      # vs origin/main (compat-check old-vs-new). New types are skipped.
+      - run: python3 tests/ci_compat_gate.py origin/main
