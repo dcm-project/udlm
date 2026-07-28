@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://udlm.dev/registry/udlm/0.1/common-elements.schema.json",
+  "title": "UDLM Common Elements — canonical shared $defs",
+  "description": "Machine-referenceable canonical shapes for concepts reused across resource types (the $defs source for `common-elements.md` §2). A type references a shared shape via `$ref: common-elements.schema.json#/$defs/<Name>` rather than reinventing it — this is what makes the single-source rule enforceable for value shapes (SPEC-DESIGN §33). Prose definitions + the normalization plan live in `registry/common-elements.md`; this file is the normative machine mirror.",
+  "$defs": {
+    "Quantity": {
+      "$comment": "common-elements.md §2.1",
+      "type": "string",
+      "pattern": "^[0-9]+(\\.[0-9]+)?(m|[KMGTPE]i?B?)?$",
+      "description": "A magnitude + explicit unit as one string (Kubernetes resource.Quantity form): decimal SI (K/M/G/T/P/E), binary (Ki/Mi/Gi/Ti/Pi/Ei), optional trailing B (MB/GiB), or milli (m). Never a bare number whose unit is implied by the field name. Use for memory, storage, bandwidth, power (\"650W\" — unit carried by the field), etc. Examples: \"32GB\", \"1.5Gi\", \"500m\", \"200GB\", \"100PB\"."
+    },
+    "ComputeResources": {
+      "$comment": "common-elements.md §2.2 — the compute-sizing keystone",
+      "type": "object",
+      "description": "Canonical compute sizing. Reused by anything that sizes compute (VM, cluster node pool, database instance). `vcpu`/`cores`/`memory_gib` are non-canonical synonyms — normalize to cpu.count + memory.size.",
+      "properties": {
+        "instance_size": {
+          "type": "string",
+          "description": "Provider-neutral, ordinally-comparable size class (e.g. small|medium|large|xlarge) — a portable \"roughly this big\", in place of or alongside explicit cpu/memory. UDLM owns the comparable vocabulary; the provider maps it to concrete cores/RAM at naturalization (DCM ADR-023)."
+        },
+        "cpu": {
+          "type": "object",
+          "properties": { "count": { "type": "integer", "minimum": 1, "description": "vCPU / logical core count." } },
+          "additionalProperties": false
+        },
+        "memory": {
+          "type": "object",
+          "properties": { "size": { "$ref": "#/$defs/Quantity" } },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "StorageCapacity": {
+      "$comment": "common-elements.md §2.3",
+      "type": "object",
+      "description": "A sized storage allocation. `size` is a Quantity; `storage_class` names the provider tier.",
+      "properties": {
+        "size": { "$ref": "#/$defs/Quantity" },
+        "storage_class": { "type": "string", "description": "Provider storage class/tier, e.g. ceph-rbd." }
+      },
+      "additionalProperties": false
+    },
+    "StorageUsage": {
+      "$comment": "common-elements.md §2.3 (usage detail — for pools/datasets/clusters that report utilization)",
+      "type": "object",
+      "description": "Capacity + utilization, all Quantity. Used where a storage type reports allocated/free/usable (pool/dataset/cluster) rather than just a requested size.",
+      "properties": {
+        "size": { "$ref": "#/$defs/Quantity" },
+        "used": { "$ref": "#/$defs/Quantity" },
+        "allocated": { "$ref": "#/$defs/Quantity" },
+        "free": { "$ref": "#/$defs/Quantity" },
+        "usable": { "$ref": "#/$defs/Quantity" }
+      },
+      "additionalProperties": false
+    },
+    "cidr": {
+      "$comment": "common-elements.md §2.4",
+      "type": "string",
+      "pattern": "^(([0-9]{1,3}\\.){3}[0-9]{1,3}/(3[0-2]|[12]?[0-9])|[0-9a-fA-F:]+/(12[0-8]|1[01][0-9]|[0-9]{1,2}))$",
+      "description": "A CIDR block — IPv4 (\"192.0.2.0/24\") or IPv6 (\"2001:db8::/32\"). Structural octet+prefix-length validation, replacing the weak per-type `^[0-9./]+$`."
+    },
+    "ip_family": {
+      "$comment": "common-elements.md §2.4 (canonicalizes network.ip-address's `family`)",
+      "type": "string",
+      "enum": ["ipv4", "ipv6", "dual"],
+      "description": "Address family. Canonical name is `ip_family` (not `family`)."
+    },
+    "ip_address": {
+      "$comment": "common-elements.md §2.4",
+      "type": "string",
+      "pattern": "^(([0-9]{1,3}\\.){3}[0-9]{1,3}|[0-9a-fA-F:]+:[0-9a-fA-F:]*)$",
+      "description": "A single IP address — IPv4 or IPv6 (typically an outputs value)."
+    },
+    "Reference": {
+      "$comment": "common-elements.md §2.5 (contracts/identifier-scheme.md); resolution model in ADR-025",
+      "type": "object",
+      "description": "A typed cross-entity pointer to another RESOURCE — distinct from a data_reference (ADR-012), which points at immutable reference-data. Authored by target_handle (AEP-124 resource association — reference by resource path); DCM resolves and pins target_uuid at reserve (ADR-025). The uuid is the target's frozen identity (ADR-051); revision pinning, where a consumer needs it, is the separate target_version / target_digest pair (the thing@version / thing@sha256 pin grammar). The only cross-type binding surface besides typed outputs (E2). Never a provider-native id.",
+      "properties": {
+        "target_handle": { "type": "string", "description": "AUTHORING KEY. The stable handle of the target resource (e.g. tenant-alpha-prod) — what an author or policy writes. A uuid is never hand-authored for a resource reference (ADR-025 §2)." },
+        "target_uuid": { "type": "string", "format": "uuid", "description": "RESOLUTION PROVENANCE — system-populated. DCM resolves the handle to this uuid at reserve and freezes it for deterministic replay, change-impact, and cross-boundary identity (ADR-025 §5). The uuid names the target's stable identity, never a revision (ADR-051). Guaranteed present only from the Realized state onward; before then the handle has not yet resolved (claim-before-define). When present it is honesty-gated + integrity-checked." },
+        "resource_type": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]*\\.[A-Z][A-Za-z0-9]*$", "description": "Target Category.Type." },
+        "target_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$", "description": "OPTIONAL revision pin, human-legible half (ADR-051 pin grammar — thing@version): the published version of the target this reference was verified against. When carried alongside target_digest the pair must match the pin manifest's recorded row; a mismatch is refused and the digest is authoritative." },
+        "target_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "description": "OPTIONAL revision pin, exact half (ADR-051 pin grammar — thing@sha256:<hex>): sha256 over the target revision's RFC 8785-canonical form. Profiles may require digest pins (fsi). Recorded here as a referrer — the target artifact never carries its own digest." },
+        "target_authority": { "type": "string", "pattern": "^[a-z][a-z0-9-]*(\\.[a-z0-9-]+)*$", "description": "OPTIONAL AUTHORED routing authority of the target, in the ADR-038 §10 dotted form (e.g. peer.dcm.east) — which estate, peer, or jurisdiction owns the target. Absent = the local estate, and nothing else. Closes the standing gap (docs/design/standing-model-gaps.md §4): boundary policy (ADR-041) matches on this field structurally, WITHOUT dereferencing the target, so a sovereignty refusal is decidable with the pointer unresolved. A logical name only — the schema constrains its shape, never its reachability (mapping to a resolver is control-plane policy, not DNS); it names a boundary, not the data behind it." }
+      },
+      "required": ["resource_type"],
+      "anyOf": [
+        { "required": ["target_handle"] },
+        { "required": ["target_uuid"] }
+      ],
+      "additionalProperties": false
+    },
+    "Condition": {
+      "$comment": "common-elements.md §2.6 (adopts the OSAC/Kubernetes condition envelope)",
+      "type": "object",
+      "description": "A status condition. `status[].conditions[]` is the canonical realized/discovered signal across all types.",
+      "properties": {
+        "type": { "type": "string", "description": "Condition type, e.g. Ready." },
+        "status": { "type": "string", "enum": ["True", "False", "Unknown"] },
+        "last_transition_time": { "$ref": "#/$defs/Timestamp" },
+        "reason": { "type": "string" },
+        "message": { "type": "string" }
+      },
+      "required": ["type", "status"],
+      "additionalProperties": false
+    },
+    "Timestamp": {
+      "$comment": "common-elements.md §2.7",
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 / ISO 8601 UTC timestamp. Standard realized fields: create_time, update_time, last_transition_time."
+    }
+  }
+}

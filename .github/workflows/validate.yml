@@ -1,0 +1,117 @@
+# Registry validation — every type spec must validate against the meta-schema
+# (tests/validate_registry.py: JSON Schema 2020-12 + $id↔version/conforms_to cross-checks).
+name: validate
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  validate-registry:
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 — the default shallow checkout carries no origin/main on PR events,
+      # which silently no-ops every base-ref-diffing gate (identity integrity, pin-manifest
+      # append-only). Full history keeps the base ref readable.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install jsonschema pyyaml
+      - run: python3 tests/validate_registry.py
+      # Instance/catalog valid-by-construction gate (realized entities, DCMGroups, catalog
+      # items) + semantic checks JSON Schema can't express (process-axis family match,
+      # component_id uniqueness, depends_on cycles, binding⊆depends_on). Was authored to be
+      # CI-wired ("Exit non-zero if anything is invalid") but never added — so a stale check
+      # false-failed unnoticed. Now enforced.
+      - run: python3 registry/tools/validate.py
+      - run: python3 tests/check_estate_tokens.py
+      - run: python3 tests/check_session_narration.py
+      - run: python3 tests/check_model_vocabulary.py
+      # Terminology guard (ported from the mirror repo after a retired term regressed with
+      # nothing upstream to catch it): retired terms fail unless the line documents the change.
+      - run: python3 tests/check_terminology.py
+      # Derivability gate (DRV-001): history-shaped outputs classify as DERIVED (source named)
+      # or OBSERVED, or move to the instance type — stored copies of derivable values drift.
+      - run: python3 tests/check_derivability.py
+      # UC dimension vocabulary — closed set, single-sourced (2026-07-28 sweep F1)
+      - run: python3 tests/check_uc_dimensions.py
+      # UC persona vocabulary — canonical persona set, single-sourced (PER-001)
+      - run: python3 tests/check_uc_personas.py
+      - run: python3 tests/check_definition_single_source.py
+      # Rule-ID single-source: every normative rule-ID prefix must be registered in
+      # registry/rule-id-registry.yaml and defined only in its home file (ADR-028,
+      # registry/rule-id-naming.md). Was authored but never CI-wired.
+      - run: python3 tests/check_single_source.py
+      # Repo-cleanliness gates (the nine questions — dav docs/repo-cleanliness-review.md):
+      # referential integrity (Q8) + CI/signoff parity (these two ran only in signoff.sh before).
+      - run: python3 tests/check_links.py
+      # Guide-integrity (DOC-002): the contributor guides (docs/working-with-udlm.md, docs/authoring/**,
+      # docs/{reviewing,consuming,contributing-guide}.md) must not rot — every file/schema/gate they
+      # reference must exist, so a newcomer following them verbatim never hits a dead pointer.
+      - run: python3 tests/check_authoring_docs.py
+      - run: python3 tests/check_profile_tables.py
+      # Rule-36 base-standard gates (G1/G2/G3/G5/G6, 2026-07-25 fleet review) with the
+      # burn-down baseline ratchet — new violations fail; baselined ones warn until fixed.
+      - run: python3 tests/check_type_standard.py
+      - run: python3 registry/tools/generate_type_catalog.py --check
+      # Identity integrity (ADR-051): uuid frozen, version bumps under the publish law,
+      # immutable records supersede — plus republication detection via the base pin manifest.
+      - run: python3 tests/check_identity_integrity.py
+      # Pin manifest (the digest referrer, ADR-051): current vs the tree, append-only vs base.
+      - run: python3 registry/tools/generate_pin_manifest.py --check
+      # Scoped-Class substrate (ADR-038 / P0): Liskov extension gate + generated-spec freshness
+      - run: python3 tests/check_class_liskov.py
+      - run: python3 registry/tools/generate_class_specs.py --check
+      - run: python3 tests/check_class_address_resolution.py
+      # Spec-completeness gate (rule-36 — every spec ships with a UC + example + flow, declared in
+      # its structural `coverage:` block): every declared referent must resolve (COV-001), and the
+      # backfill backlog (spec-coverage-backlog.yaml) must match the tree so a new uncovered spec
+      # can't slip in silently (COV-002) — it declares coverage or visibly joins the backlog.
+      - run: python3 registry/tools/spec_coverage.py --check
+      # Spec-example gate (ADR-055 — examples live in spec.examples, JSON Schema / OpenAPI
+      # convention): every in-spec example validates against its own spec schema (EXG-001, hard),
+      # and every spec carries one unless baselined in the burn-down (EXG-002). Spectral's
+      # oas3-valid-schema-example rule, UDLM-side; closes the deferred rule-36 G4 / D8 ruling.
+      - run: python3 tests/check_spec_examples.py
+      # Graph integrity (declared one-sided, derived two-sided): the edge-type inverse map matches the
+      # schema enum (GRAPH-001), every relationship target resolves (GRAPH-002), and every edge has a
+      # derivable inverse so the graph is navigable both ways (GRAPH-003). A one-sided declaration
+      # never yields a one-sided graph; a dangling edge fails.
+      - run: python3 tests/check_graph_integrity.py
+      # Instance-fuzz: every type spec must be satisfiable (a minimal instance synthesized from
+      # the schema itself validates) and discriminating (dropped-required / enum-violation /
+      # wrong-type / unknown-key mutations rejected); output schemas satisfiable ([D8.3]).
+      - run: python3 registry/tools/fuzz_type_specs.py
+      # Composition hammer: validate.py's catalog-item semantic checks driven with generated
+      # graphs — cycles / undeclared outputs / unresolved siblings must error, and a legal
+      # producer→consumer pair over every real declared output must pass clean.
+      - run: python3 tests/check_composition_hammer.py
+      # Provider contract cross-check: every provider standard token resolves in the
+      # standards-adoption register (the ADOPT-001 discipline), accreditation-anchor uuids
+      # v4 + unique across provider docs, version ranges parse.
+      - run: python3 tests/check_provider_contracts.py
+      # Consumer conformance (ADR-044): consumers declare their read surface in
+      # registry/consumers/; every declared type must exist, no noted_version may run ahead of
+      # the registry, and every type is consumed or acknowledged in unconsumed.yaml — which the
+      # gate regenerates and compares, so the acknowledgment never drifts silently.
+      - run: python3 tests/check_consumer_conformance.py
+      # Model-health scoreboard: registry/MODEL-HEALTH.md + model-health.json are generated
+      # from the tree (family counts, fuzz discrimination density, outputs/context/UC/consumer
+      # coverage) — fail if stale, same discipline as the type catalog.
+      - run: python3 registry/tools/model_health.py --check
+      - run: python3 tests/check_standards_registered.py || echo "::warning::standards-register warnings (soft gate, matches signoff)"
+      - run: python3 -c "compile(open('registry/tools/compat-check.py').read(), 'compat-check.py', 'exec')"
+      # Real §9 gate: every changed type spec must declare a sufficient version bump
+      # vs origin/main (compat-check old-vs-new). New types are skipped.
+      - run: python3 tests/ci_compat_gate.py origin/main
+      # Attestation evidence: after the whole suite passed, emit the scoreboard + registry ref
+      # as an uncommitted artifact (a committed ref would be permanently stale). Validation
+      # results become signable attestation input downstream; a failed suite emits nothing
+      # because this step is unreached.
+      - run: python3 registry/tools/model_health.py --attest model-validation-attestation.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: model-validation-attestation
+          path: model-validation-attestation.json

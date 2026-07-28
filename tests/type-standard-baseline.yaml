@@ -1,0 +1,5 @@
+_comment: The burn-down baseline for tests/check_type_standard.py (rule 36 gates). Entries are KNOWN violations
+  from the 2026-07-25 fleet review (TYPE-REVIEW-2026-07-25.md), reported as WARN. Any violation NOT listed fails
+  CI as a regression. Shrink with every fix-wave PR; a fixed entry shows STALE-BASELINE until removed. Never add
+  entries to silence a new violation without a maintainer ruling.
+known: []

@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""CI compat gate — makes SPEC-DESIGN §9 [enforced: compat-check] real.
+
+For every resource-type spec that differs from the base ref (default origin/main), run
+registry/tools/compat-check.py with old=base-version, new=working-version and fail if the
+declared `version` bump is under-declared (a breaking change shipped as MINOR/REVISION, etc.).
+New type files (absent on base) are skipped — there is no prior version to compare.
+
+Usage: tests/ci_compat_gate.py [base_ref]   (base_ref default: origin/main)
+Exit 0 = all changed specs declare a sufficient bump (or are new); 1 = at least one
+under-declared. Wire into .github/workflows/validate.yml.
+"""
+import os
+import subprocess
+import sys
+import tempfile
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+COMPAT = os.path.join(ROOT, "registry", "tools", "compat-check.py")
+
+
+def sh(*args):
+    return subprocess.run(args, cwd=ROOT, capture_output=True, text=True)
+
+
+def renames():
+    """old_path -> new_path, from registry/renames.yaml (the rename-map discipline: every path
+    rename ships with an explicit old->new map). A renamed spec is the SAME entity as its
+    base-ref path — the gate compat-checks base-old-path vs working-new-path instead of
+    reading the move as a REMOVED + NEW pair (which would skip the check entirely)."""
+    path = os.path.join(ROOT, "registry", "renames.yaml")
+    if not os.path.exists(path):
+        return {}
+    import yaml
+    doc = yaml.safe_load(open(path, encoding="utf-8")) or {}
+    return doc.get("renames") or {}
+
+
+def _resolves(ref) -> bool:
+    return sh("git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").returncode == 0
+
+
+def main() -> int:
+    base = sys.argv[1] if len(sys.argv) > 1 else "origin/main"
+    # Ensure the base ref is present. Fetch ONLY if it doesn't already resolve, and never with
+    # `--depth 1` on a full clone — that shallows the whole repo, truncating the git history the
+    # ADR-051 revision store depends on (2026-07-28 sweep, N-04). Match the fetch depth to the
+    # clone: shallow CI clone -> shallow fetch of the ref; full clone -> a normal fetch.
+    if not _resolves(base):
+        ref = base.split("/", 1)[1] if base.startswith("origin/") else base
+        shallow = sh("git", "rev-parse", "--is-shallow-repository").stdout.strip() == "true"
+        if shallow:
+            sh("git", "fetch", "--quiet", "--depth", "1", "origin", ref)
+        else:
+            sh("git", "fetch", "--quiet", "origin", ref)
+
+    # Fail CLOSED: an unresolvable base is not "no changes", it is "cannot verify" (N-04). The
+    # old code returned 0 here, so a missing base ref passed the gate silently.
+    if not _resolves(base):
+        print(f"ERROR: compat-gate base ref {base!r} does not resolve — cannot verify version "
+              f"bumps. Refusing to pass vacuously (fail-closed).", file=sys.stderr)
+        return 2
+
+    diff = sh("git", "diff", "--name-only", base, "--", "registry/resource-types")
+    if diff.returncode != 0:
+        print(f"ERROR: compat-gate cannot diff against {base} ({diff.stderr.strip()}) "
+              f"(fail-closed).", file=sys.stderr)
+        return 2
+
+    changed = [f for f in diff.stdout.splitlines()
+               if f.endswith((".json", ".yaml", ".yml"))]
+    if not changed:
+        print(f"compat-gate: no resource-type changes vs {base}")
+        return 0
+
+    ren = renames()                          # old path -> new path
+    ren_rev = {new: old for old, new in ren.items()}
+
+    failures = 0
+    for rel in changed:
+        old_rel = rel
+        old_blob = sh("git", "show", f"{base}:{rel}")
+        if old_blob.returncode != 0 and rel in ren_rev:
+            # renamed spec — same entity as its base-ref path (rename-map discipline)
+            old_rel = ren_rev[rel]
+            old_blob = sh("git", "show", f"{base}:{old_rel}")
+        if old_blob.returncode != 0:
+            print(f"ok   {rel}  — NEW type (no prior version on {base})")
+            continue
+        if not os.path.exists(os.path.join(ROOT, rel)):
+            new_rel = ren.get(rel)
+            if new_rel and os.path.exists(os.path.join(ROOT, new_rel)):
+                # the OLD path of a mapped rename: the new path carries the compat check
+                print(f"ok   {rel}  — RENAMED to {new_rel} (compat-checked at the new path)")
+                continue
+            # symmetric to a NEW type: a REMOVED type has no new version to compat-check.
+            # The removal is a deliberate, reviewed change (e.g. retiring an anti-pattern type);
+            # the gate checks bump sufficiency, not removal policy, so don't crash on it.
+            print(f"ok   {rel}  — REMOVED type (retired; no new version to compat-check)")
+            continue
+        if old_rel != rel:
+            print(f"     {rel}  — renamed from {old_rel}; compat-checking across the rename")
+        suffix = os.path.splitext(rel)[1]
+        with tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False) as tmp:
+            tmp.write(old_blob.stdout)
+            old_path = tmp.name
+        try:
+            res = sh("python3", COMPAT, old_path, os.path.join(ROOT, rel))
+            print(res.stdout.strip() or res.stderr.strip())
+            if res.returncode != 0:
+                failures += 1
+        finally:
+            os.unlink(old_path)
+
+    print(f"\ncompat-gate: {len(changed)} changed spec(s), {failures} under-declared")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
