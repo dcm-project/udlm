@@ -1,0 +1,497 @@
+# UDLM Spec Design Requirements
+
+The rubric every UDLM **Resource Type Specification** is designed to. **Hard constraints** are
+normative (MUST); those marked **[enforced]** are checked by `tools/validate.py` /
+`tools/compat-check.py` and should run in CI. **Design principles** are review discipline (SHOULD).
+Each hard constraint cites the UDLM contract it derives from.
+
+## Hard constraints (MUST)
+
+### Format & validity
+1. **JSON Schema 2020-12** is the normative model — the format for all entity-type definitions
+   (`docs/spec/contracts/schema-sharing.md`).
+2. Authorable in **JSON or YAML**, 1:1 — same document, same meta-schema. **[enforced]**
+3. **Valid-by-construction** — validates against `resource-type-spec.schema.json` or it is not a
+   conformant spec. **[enforced]**
+4. **Structural schema** — every field typed, `additionalProperties` controlled; no untyped blobs.
+
+### Identity & naming
+5. **UUIDv4** identity, immutable for the type's life; Handles are mutable/rebindable, References are
+   typed cross-doc pointers (`docs/spec/contracts/identifier-scheme.md`). **[enforced: format]**
+6. **Vendor-neutral `Category.Type` name**, e.g. `Compute.VM`
+   (`docs/spec/foundations/resource-type-hierarchy.md`). Full conventions — tiered namespaces (Tier-1 `Category.Type`
+   vendor-neutral / Tier-2 `Vendor.Type`), when to add a category, field/output/file naming, and the
+   *name-to-an-existing-standard-before-inventing* rule — live in **`registry/naming-conventions.md`**.
+   **[enforced: pattern]**
+
+### Versioning — two axes
+7. **`conforms_to: udlm/<MAJOR.MINOR>`** — SPEC-axis binding (apiVersion); same MAJOR = wire-compatible
+   (`CONFORMANCE.md` §9). **[enforced: pattern]**
+8. **`version: MAJOR.MINOR.REVISION`** — ENTITY axis; immutable once published; any change publishes a
+   new version (`docs/spec/foundations/layering-and-versioning.md`). **[enforced: pattern]**
+9. **Semver semantics**: additive → MINOR, breaking → MAJOR, docs → REVISION. **[enforced: compat-check]**
+10. A **MAJOR** bump deprecates the predecessor and MUST carry `migration_guidance`; a deprecation
+    window precedes retirement (universal deprecation model + K8s deprecation policy).
+11. **Version-pinned references** — profiles (E1) and realized instances (E5) pin the exact version used.
+
+### Lifecycle & ownership
+12. Conforms to the **four states** Intent → Requested → Realized → Discovered (`docs/spec/foundations/four-states.md`).
+13. **`spec` = desired state** (Intent/Requested, consumer-authored); **`outputs` = observed state**
+    (Realized/Discovered, provider-authored). Never blurred (the K8s spec/status discipline).
+14. **Implementation is the authoritative system of record** for realized data — the basis of sovereignty
+    and audit (`docs/spec/foundations/resource-service-entities.md`).
+15. **Implementation is two-phase — validate-and-reserve, then commit** (`docs/spec/foundations/four-states.md` §2.3a;
+    ADR-011). The Requested → Realized transition MUST **reserve** every target (validate + hold, **no
+    side effects**, returning computed realize-time facts) and reconcile the reserved graph to a fixed
+    point, MUST NOT **commit** (build) any target until the **whole reserved graph is held-and-valid and
+    all applicable policy is green** (the commit barrier), and MUST **release** any uncommitted hold on
+    failure/cancellation/TTL-expiry. Providers expose `reserve` / `commit` / `release`, all idempotent
+    (`docs/spec/contracts/provider-contract.md` §6a). This is what makes `fulfillment: provider` (ADR-009)
+    side-effect-free: cross-dependency criteria are computed against **reserved** facts before anything
+    is built. A `reserve` request carries a `requested_ttl` bounded by the provider-advertised
+    `min_hold_ttl` / `max_hold_ttl`; **TTL expiry is an implied release** and MUST emit
+    `reservation.expired`. DCM MUST **independently** time each hold (`reservation_reconcile_grace`) and,
+    if the provider misses that event, emit its own `reservation.expiry_unconfirmed` and force-resolve
+    by policy (`RELEASE_AND_NOTIFY_AFFECTED`) — a lapsed hold never resolves by silence.
+
+### Portability & provider-neutrality
+15. The spec is the contract **any** provider of the type MUST satisfy; providers
+    naturalize → realize → denaturalize (`docs/spec/contracts/provider-contract.md`).
+16. **Any deviation from full portability MUST be explicitly declared** via `portability`. **[enforced: enum]**
+17. **No provider-specific (vendor-exclusive) data in the universal spec** — those ride declared
+    extension points (`portability` + `provider_hints` / the provider surface). **This binds adoption
+    too:** a type MUST NOT pull a standard's *vendor-exclusive* elements into its portable spec. A
+    standard that is itself vendor-exclusive is adopted only at the provider/extension surface
+    (`portability: provider-specific`), never in the base contract — the portable spec stays the
+    neutral subset every provider can satisfy.
+
+### Relationships
+18. Relationships are **first-class and typed** (`depends_on`/`binds_to`/`references`/`contained_by`),
+    target **resource types** (never provider-specific refs), and form **acyclic** composite DAGs
+    (`docs/spec/foundations/service-dependencies.md`, `docs/spec/foundations/template-composition-model.md`). **[enforced: shape]**
+18a. **One authoritative direction — no stored inverse.** A relationship is declared **once**, on the
+    **dependent/subordinate side** (the resource that `depends_on` / is `contained_by` / `binds_to` /
+    `references` another). Only **direct** (one-generation) edges are recorded; ancestry/descendants are a
+    **query**, not a record. The inverse is **derived** by traversal (a reverse index); storing it as a second
+    authoritative record is a conformance violation — denormalization drifts (cf. the `ownership_model`
+    deferral: "the authoritative declaration the relationships conform to, not a derived copy"). Prior art:
+    Git parent-pointers, Kubernetes `ownerReferences`. **[enforced: shape]**
+18b. **Targets MUST resolve (referential integrity).** Every relationship target resolves by **`target_uuid`**
+    (authoritative; `target_handle` advisory — never name alone), to a resource in scope. An unresolved target
+    is a **dangling reference**, flagged by `registry/tools/validate.py` — never silently accepted.
+    **[enforced: validate.py]**
+18c. **Durability is the audit chain, not duplication.** Relationship resilience comes from immutable UUID
+    references plus the append-only audit/provenance chain (`registry/audit-record.schema.json`; ADR-005) —
+    which is the **preferred mechanism to rebuild or quasi-confirm** a relationship when an edge is lost or in
+    doubt. Redundant both-sides storage is explicitly **not** the resilience mechanism; it only adds drift.
+    Reconstruction reads the chain **LIFO** (most-recent-first) for relationship data: the **latest** mutation
+    event for an edge is its authoritative current state (last-write-wins), older events are provenance — so a
+    rebuild pops the newest event per edge and stops, rather than replaying the whole history forward.
+18d. **To rely on audit, the relationship MUST be audited explicitly.** Every relationship mutation
+    (create / change / remove) is recorded as a first-class **audit event** —
+    `{source_uuid, target_uuid, kind, operation, at, provenance}` — in the append-only chain (ADR-005). The
+    chain can only rebuild or confirm (18c) what it explicitly holds; an edge that never emitted an audit event
+    is not recoverable. Relationship edges are therefore **auditable events, not merely resource fields** —
+    which requires `audit-record.schema.json` to carry a relationship-mutation event shape. **[enforced: validate.py + audit schema]**
+18e. **Undo/revert is permitted, but it resolves to an explicit forward action — never a differential.** A
+    consumer may request an undo or revert; DCM **resolves it into a new, explicit forward action**, and the
+    audit chain records the **resulting** relationship explicitly (a forward create/change/remove to that
+    state) — never an "undo the last event" reference. This keeps the chain append-only and self-describing and
+    keeps LIFO (18c) valid: the newest event always states the full current state, so no replay or
+    interpretation is needed. A revert is admissible only when the **target resource's lifecycle contract and
+    its resource provider can actually realize that state** — you cannot declare a relationship the provider
+    cannot reach. (Same as declarative desired-state systems: `git revert` is a *new* commit recording the
+    resulting tree, not a deletion.)
+
+### Interop & data discipline
+19. **Wire-compatible** — any conformant peer can deserialize, scope-resolve, reference, and validate
+    it; independent extensions stay interoperable via the schema-sharing protocol
+    (`docs/spec/contracts/identifier-scheme.md`, `docs/spec/contracts/schema-sharing.md`).
+20. **Data, not logic** — a spec carries values + declarative constraints; *executable* rules are
+    Policy, *static* values are Layers (`docs/spec/foundations/layering-and-versioning.md` §1b).
+21. **No embedded expressions** — a spec carries *declarative* constraints only (JSON Schema
+    `if/then` · `dependentSchemas` · `enum` · bounds + markers like `createOnly`); it embeds **no**
+    expression language or executable behavior. Transformation/enrichment is Policy, applied by DCM;
+    the contract layer stays deterministic + reproducible (`docs/spec/principles/core-tenets.md` T2/T3).
+    **Computation is relocated, not banned.** When a computed binding *is* needed (e.g. a CEL
+    expression combining declared outputs), it is a **Transformation Policy evaluated by DCM's policy
+    engine** — never embedded in the portable data. It is safe *iff*: (a) the evaluator is
+    **pure/deterministic** (sandboxed CEL — no I/O, clock, or randomness), so it is reproducible from
+    the immutable record; (b) its inputs are **declared typed bindings** (governable edges); and (c) the
+    **policy engine records the evaluation** (`expression@version` + resolved inputs + output), so the
+    computed field's provenance points to the policy and every input edge. The policy-evaluation seam is
+    already the audit/provenance capture point (DCM ADR-006/010) — computation stays expressive while the
+    portable data stays declarative and the result stays auditable + provenanced.
+    Two further controls bound it: **(d) per-field opt-in** — a field is a valid CEL target only if its
+    definition declares **`cel_permitted: true`** (default **false**; a declarative field marker alongside
+    `createOnly`/`immutable`/`sensitive`). Producers of types/layers/catalog items decide which fields
+    accept computed bindings — computation is opt-in (the *simple-common-case* principle); the policy
+    engine rejects a CEL op targeting a non-permitted field. **(e) Uncovered-computed-field notification**
+    — if a CEL op sets a field that **no policy reads or constrains**, the result is *ungoverned*
+    ("unbounded"): the engine emits an **`uncovered_computed_field`** observation (recorded, pairs with
+    provenance) and the **DCM operational profile** sets the action (notify → warn → block; sovereign/
+    critical → block). Together: producers gate *which* fields may be computed; the platform flags *when*
+    a computed field is ungoverned.
+    **Field markers are contract data — policy governs and gates them, but never rewrites them.** A
+    field's markers (`cel_permitted`, `immutable`, `sensitive`, …) are part of the contract: their
+    *effective* value is the base definition **narrowed** by declarative layers (constraint profiles / org
+    layers — E1 *narrow-never-widen*, recorded with provenance), so it is reproducible (T1/T3). A policy
+    MUST NOT flip a flag in place; it MAY (i) **authorize/govern** who narrows it, and (ii) add a runtime
+    **gate on the operation** (e.g. incident-mode → deny all CEL; a tenant → no computed fields), recorded
+    as a decision. **Direction:** *tightening* (e.g. `cel_permitted` true→false) is allowed via a narrowing
+    layer or a runtime gate; *loosening* (false→true — permitting what a producer disallowed) requires a
+    deliberate contract/version change, never a policy or overlay (preserves producer control).
+
+### Adopted standards — provenance & licensing
+22. **Source provenance** — every type or field whose vocabulary is **adopted** from an external
+    standard (the *adopt* disposition, `docs/spec/principles/adopted-standards.md`) MUST record the
+    source: the standard's name, version/edition, and canonical URL, in the type's `adopts[]` reference
+    (the `adopted_standard_ref` in `registry/resource-type-spec.schema.json`) or a field-level
+    `x-standard` pointer. (A provider separately declares which standard *versions* it can emit/consume
+    via `registry/provider-adopted-standards.schema.json` — a different concern.) A definition that
+    borrows elements with no recorded source is invalid.
+23. **License compatibility** — before adopting, the source's license MUST be checked against the
+    UDLM project license (Apache-2.0) and the verdict recorded with the source. **Referencing** a
+    standard's *vocabulary* (field/element names — facts, not copyrightable) is always permitted,
+    whatever the source license. **Copying** a source's schema text, enum bodies, or normative prose
+    into the UDLM tree (an *absorb*) is permitted ONLY from an Apache-2.0-compatible license;
+    copyleft / file-scoped sources (GPL, LGPL, MPL) MAY be **referenced by name** but their text or
+    files MUST NOT be vendored into UDLM (`docs/spec/governance/registry-governance.md`, IP hygiene). This is
+    why the disposition default is *adopt-by-reference*: it is both schema-rev-decoupled **and**
+    license-clean.
+23a. **Adopt-by-reference casing — foreign names never become live keys.** Adopting a standard's
+    vocabulary means *referencing* its names, not *minting* them as resource keys. The **live field name
+    is always the native (`snake_case`) form** (`serial_number`); the adopted source name — whatever its
+    casing (Redfish PascalCase `SerialNumber`, Metal3 camelCase `serialNumber`) — is recorded as a
+    **metadata value**, never a key: `adopts[].standard_name`, a field-level `x-standard` pointer, or
+    `aliases[]`. Foreign casing MAY appear ONLY as such a metadata value, as an enum/string *value*, or
+    inside an explicitly-opaque extension/raw blob (`provider_hints`, `x-…`, discovered-raw) — **never**
+    as a typed key in the resource body. This keeps the canonical wire (and the AEP-bound DCM API it
+    rides) uniformly `snake_case` even though the registry adopts many differently-cased standards
+    (`registry/naming-conventions.md` §4 carve-outs). A type that mints a foreign-cased live key violates
+    both §25 and this rule.
+
+### Cross-type consistency
+24. **Shared concepts use shared shapes** — a concept that recurs across types (compute resources
+    cpu/memory, storage capacity, network CIDR / IP family, identity references, quantities,
+    timestamps, status conditions) MUST reuse the registry's **canonical common-element definitions**
+    (`registry/common-elements.md`), not be re-expressed per type. New or revised types are checked
+    against the common-element catalog; an unjustified divergence is a review finding.
+25. **Consistent naming & units** — field names are `snake_case` (`registry/naming-conventions.md` §4:
+    canonical-data-model + AEP-conformance forces one casing; lowercased initialisms, e.g. `pod_cidr`);
+    physical quantities carry an explicit unit via the canonical `Quantity` pattern (never a bare number
+    whose unit is implied by the field name); timestamps are RFC 3339; enums use the canonical token set.
+    New types are swept against the existing registry for naming/unit drift before publication.
+
+### Component granularity (entity vs data element)
+26. **A physical component (DIMM, disk, NIC, GPU, CPU) is representable BOTH ways, and the parent
+    always carries the rollup.** The containing resource (e.g. `Compute.BareMetalInstance`) MUST carry
+    the **aggregate as a data element** (`memory.size`, `cpu.count`) — the base contract never depends
+    on components being modeled. A component MAY *also* be a **first-class entity** (`Hardware.*`,
+    `contained_by` the parent) for independent tracking (serial, slot, firmware, RMA, lifecycle),
+    governed by **`composition_visibility`** (`opaque|transparent|selective`,
+    `docs/spec/foundations/service-dependencies.md` §11d): `opaque` → rollup only; `transparent`/`selective` →
+    components are entities too. When components are modeled, the parent rollup is the **reconciled
+    aggregate** of the contained components; a mismatch is **drift** (surfaced, not silently merged).
+    Component entities are additive (MINOR) — never required for the portable contract.
+
+27. **Instances of the same type MUST be individually distinguishable.** When a parent holds multiple
+    components of one type — two identical 32 GB DIMMs, eight same-model drives — each instance MUST
+    carry enough identity to tell them apart, even when type, size, and use are identical. Use the
+    canonical `Identity` element (`registry/common-elements.md`): **`location`** (physical position
+    within the parent — DIMM slot `P1-DIMMA1`, drive bay `Bay 7`, PCIe slot — unique within the parent,
+    stable across reboots) and **`serial_number`**/**`wwn`** (globally unique hardware identity, survives
+    a move to another parent). A semantic **`role`/`usage`** field distinguishes same-model components
+    by *purpose* (a drive as `boot` vs `ceph-osd`; memory as `system` vs `persistent`). The entity's own
+    UUID is its UDLM identity; `location`/`serial_number`/`role` are the **discriminators** that bind that
+    UUID to one physical instance and make "same type, different unit" and "same use, different serial"
+    both expressible. The same rule applies inline (the rollup's `modules[]`/`disks[]` arrays MUST key
+    each element by `location` or `serial_number`, never by array position alone). Grounded in Redfish
+    (`Memory.SerialNumber`+`DeviceLocator`, `Drive.SerialNumber`+`WWN`+`PhysicalLocation`) and Metal3
+    (`storage[].{name,serial_number,wwn}`, `nics[].mac`).
+
+### Lifecycle entry — raw & unallocated resources
+28. **A type MUST support a "raw" existence: Discovered state populated, no Intent.** A resource that
+    physically exists but has not been allocated — a freshly racked server, a brownfield import, a spare
+    drive on the shelf — MUST be representable for **inventory and tracking** with only its Discovered
+    state populated and **no Intent/allocation** (`docs/spec/foundations/four-states.md` §2.4). Such a resource
+    carries an **availability** lifecycle state (canonical `lifecycle_state`, e.g.
+    `available|allocated|retired`; adopts Metal3 `provisioning.state: available`) marking it
+    unallocated. It is later **adopted** — an Intent is attached (allocation / brownfield ingestion),
+    entering the managed lifecycle — and adoption MUST **preserve the entity UUID** (four-states §3),
+    so all inventory history accrues to the same entity. "Ingest raw, append changes later" is therefore
+    the discovered-first lifecycle entry, the peer of intent-first (declare → realize). A type whose
+    schema *requires* Intent fields to instantiate violates this rule.
+
+### Decision decomposition — the three abstractions
+29. **Every type and every decision is decomposed across the three foundational abstractions —
+    `Data · Policy · Provider`** (DCM ADR-002; the UDLM Data⇄Policy boundary, `docs/spec/principles/core-tenets.md`).
+    A capability is only fully scoped when each is named: **Data** = what UDLM models/holds (types,
+    common-elements, served overlays); **Policy** = what DCM decides/computes/governs (the rules,
+    matching, gating); **Provider** = what a provider *declares as possible* and the *mechanism it
+    executes* (unmodeled). A DecisionRecord/ADR MUST carry a **Data · Policy · Provider** section (or
+    explicitly state "n/a, because…" for any that genuinely doesn't apply). This prevents modeling a
+    requirement as data with no policy to consume it, or a mechanism with no provider to declare it. It
+    is foundational across UDLM, DCM, and (where applicable) DAV.
+
+30. **Universal identity is RFC 9562 UUID — v4 for identity, v7 for time-ordered artifacts,
+    everything else prohibited** (`docs/spec/contracts/identifier-scheme.md` §2.1, normative). Every entity,
+    type spec, instance, policy, provider, and request carries an immutable v4 uuid minted once at
+    creation (CSPRNG) and never reused (§5). Every cross-entity reference is
+    `{uuid: authoritative, handle: advisory}` — never name alone (docs/spec/foundations/context-and-purpose.md
+    §3). Validators MUST check version nibble + variant bits at ingest/authoring
+    (estate CI and `tests/validate_registry.py` do).
+
+31. **Every standards decision is registered — what, why, where, when, who**
+    (`registry/standards-adoption-register.md`, normative). Any standard a spec adopts, absorbs
+    a pattern from, retires, or deliberately REJECTS gets a DecisionRecord-shaped register
+    entry: the exact `adopts[].standard` strings it covers, the rationale *including
+    alternatives considered*, the git-derived adoption instant (common-elements §8 — no
+    fabricated precision), the decider, where it is used, and the license verdict. An
+    `adopts[]` entry whose standard string has no register entry fails CI (`ADOPT-001`,
+    `tests/validate_registry.py`). **[enforced]** Rejections are first-class: a standard
+    evaluated and not adopted is recorded with the same rigor, so the next reader doesn't
+    re-run the evaluation.
+
+32. **Tenancy is schema-enforced.** Every realized-entity instance carries a required
+    `tenant_uuid` — the uuid of a `tenant_boundary` grouping validating against
+    `registry/profile.schema.json` / `Grouping` (TEN-001/TEN-003, `docs/spec/foundations/resource-grouping.md` §2.2;
+    `docs/spec/foundations/data-model-core.md` §5 [D3]). **[enforced]** (`registry/tools/validate.py`;
+    referential existence of the tenant is a store-level check, not a schema one).
+
+33. **One rule, one home, one ID — single-source.** Every normative rule, vocabulary, or
+    wire-shape is *defined* in exactly one file and carries a stable ID (`INF-001`, `ENT-006`,
+    `DPO-003`, …). Other documents **reference the ID; they never restate the rule** — a restated
+    rule is a second definition that drifts. (The 2026-07 sweep found the same rule defined up to
+    four ways, and ID families reused for unrelated meanings across files.) A rule-ID *defined* in
+    more than one file fails CI (`tests/check_single_source.py`); existing debt is grandfathered in
+    that check's baseline and burned down as the dedup PRs land, and a family split across files is
+    warned. When a rule must appear elsewhere, cite it by ID with a one-line gist
+    — the reference carries its own gist (e.g. `ADR-008 — the UDLM/DCM boundary test`), never a bare number. **[enforced]**
+    (`tests/check_single_source.py`) To find the home before you write, use the file
+    index (`docs/file-index.md`) — it names what each document owns.
+
+34. **A resource type's base is the resource's *portable definition*; provider-specific config is stored
+    extra** (ADR-016). The **base spec** carries the resource's **portable, standard-grounded config** — the
+    fields every provider of the type accepts (a container's `image`/`resources`/`command`/`args`/`ports`/
+    `mounts`) — plus its **graph-bearing** (`data_reference` / relationship / service-graph),
+    **audit/provenance/identity**, and **docs/spec/contracts/drift** elements. The line is **portable vs
+    provider-specific**, not config-vs-not: portable config that defines the resource is base;
+    **provider-specific** config is declared by the provider, projected as a config interface DCM offers
+    (`docs/spec/contracts/provider-contract.md` §1a.3), and its **values stored** as Provider-Class
+    `SharedDataElement`s (ADR-038; schema implementation #199) across Requested/Realized, portability-flagged. **DCM stores the config
+    *state* — base and extra — because it is the state system-of-record and drift is a diff; there is no
+    "store a pointer instead of the values".** The provider owns the *schema*; the *mechanism* stays out of
+    the substrate (DCM ADR-023); the *state* is always recorded. **Corollary:** every resource DCM manages
+    has a resource record type. **[enforced: review]**
+
+35. **Provider-neutral framing — model the fact, never dictate the mechanism.** A type models *what* a
+    fact is, never *how* or *by what* it is realized, and MUST NOT imply a particular mechanism or provider
+    is *the* or *preferred* way. (An IP address's origin is a field — `static`/`dhcp`/`link-layer`/`random`;
+    UDLM neither prescribes DHCP as the way to serve it nor names Kea/dnsmasq/BIND as the way to run it.)
+    Concrete providers appear only as **examples** ("e.g. …") or reference implementations — never as the type's
+    grounding, its normative text, or an adopted "the model." And **no estate/deployment-specific references
+    in the portable spec** (host names, a site's tool choice, `group_vars`, generator scripts) — those live
+    in the estate's own repo. Extends §17 (no provider-specific data in the universal spec).
+    **Product-name neutrality (the diplomatic tightening):** a product or vendor name appears ONLY
+    (a) in `adopts[]` / `aliases[]` entries and the standards-adoption register — attribution of an
+    adopted standard or vocabulary cross-walk is not endorsement, and an adoption stripped of its
+    name is meaningless — and (b) in a spec description only when attributing that adopted
+    standard's own vocabulary (e.g. "Metal3 `rootDeviceHints`", where Metal3 is in the type's
+    `adopts[]`). Products as **actors, examples, or illustrations** are replaced with generic
+    archetypes everywhere — normative text, `context` blocks, worked examples, flows ("a
+    multi-cluster fleet manager", "an IPAM appliance", "the incumbent/successor engine" — never a
+    named engine or platform). Technology identifiers that ARE the generic mechanism stay
+    (`zfs`/`md`/`lvm` pool kinds, `x86_64`, `uefi`, Kubernetes as the generic system); public
+    example data uses neutral placeholders (`<vendor>`, `Board-X`, `linux-server-9`) even where a
+    real estate would record an observed vendor string. **[enforced:
+    review]** *(quality-sweep bar — audit every type's descriptions/adopts/roles for a dictated mechanism,
+    provider, or estate specific.)*
+
+36. **The resource-type base standard — expectations every type meets.** A new or revised
+    resource type is not done when its schema validates; it is done when it meets the base
+    standard. **(a) Standards cross-walk:** the domain's industry standards are surveyed;
+    `adopts[]` records what is adopted with disposition + provenance/license (§22–23); concerns
+    the industry treats as portable are either modeled or listed as **documented deliberate
+    exclusions** (with the ADR-038 scope: provider-variable concerns are Provider-Class
+    `SharedDataElement`s, named as such — never silently absent). **(b) Typed outputs (E2):**
+    every realizable type declares its Realized output surface — the named, typed values a
+    downstream binder consumes — or is explicitly exempt-by-family (Knowledge/reference types);
+    a binding names a declared output, never a string-spliced guess. **(c) Minimal required
+    surface:** `spec.required` is the smallest honest set. **(d) References, not strings:**
+    fields naming another resource are references (§34/PVD discipline; an admission-time string reaches the
+    discipline via the vocabulary-intake ladder — `docs/design/vocabulary-intake-ladder.md` / ADR-039 —
+    strictness gates minting, never matching). **(e) Relationship
+    surface declared:** `relationships[]` states what the type may depend on, contain, or bind
+    to, with `edge_type` + cardinality. **(f) Lifecycle completeness:** `immutable[]` is declared;
+    decommission semantics follow the tombstone discipline (DEP-007); the Realized/Discovered
+    surface is drift-comparable. **(g) Brownfield instantiability:** the type is instantiable
+    from Discovered state alone (§28). **(h) Credential/sensitive discipline:** secret-bearing
+    fields are credential references, never inline values; sensitive outputs are flagged
+    `sensitive`. **(i) Observability position:** the type states what is model state vs external
+    telemetry (referenced via an Information Provider) — metrics are not modeled as fields.
+    **(j) A current worked example** (existing requirement, plus currency: the example exercises
+    the type's present spec surface). **(l) Plain-English context:** the type carries a `context`
+    block — purpose (one sentence), plain description (day-one engineer language), use-when,
+    not-for, works-with — rendered into `registry/TYPE-CATALOG.md` (generated; a `--check` gate
+    keeps it current). A type an engineer cannot place without reading its schema is not done.
+    **(k) Corpus use cases:** the type ships model-validation
+    use cases in `use-cases/` covering its capability axes — **usage (provision through day-2
+    update), migration, rehydration, portability, sovereignty, and tenancy** — so DAV gap
+    analysis can detect regressions per type, not just per model. **[enforced: review; (b), (j),
+    and (k) are CI-gate candidates — outputs-nonempty, example-currency, and UC-coverage checks]**
+
+37. **Derivability — a type does not store what the model already computes.** A value the model
+    can compute from records it already holds — the count of the things an edge points at, the
+    arithmetic over a declared range, the last run of a job — is computed on read, not stored as
+    an independent field. A stored copy is drift waiting to happen: the moment the underlying
+    records change, the copy is a second answer to a question that must have one. This is the
+    same compute-never-store discipline the model already applies to derived shape
+    (`has_constituents`, ADR-027 addendum), derived nature (`edge_type`, entity-relationships §4),
+    and staleness verdicts (ADR-048 — judged against declared expectation, never stored). Where a
+    realized reading genuinely is not derivable from model records — a provider watches it and
+    reports it — the type says so, so a reader can tell a rollup from an observation.
+    **[enforced: `tests/check_derivability.py`]**
+
+| Rule | Statement |
+|---|---|
+| `DRV-001` | A resource type MUST NOT declare a field whose value is derivable from other model records (relationships, instance records, declared ranges, provenance) as an independently stored fact. A field whose **name** is shaped like a history/recency fact (`last_*`, `latest_*`, `previous_*`, `runs_*`, `history_*`, `*_history`, `*_completed`) or, in `outputs`, like an aggregation (`total_*`, `num_*`, `count_*`, `sum_*`, `avg_*`, `current_*`, `*_count`, `*_total`, `*_sum`, `*_average`) MUST either declare its classification in its description — **DERIVED** (naming the source it is computed from) or **OBSERVED** (a provider-watched fact not derivable from model records) — or not exist on the type, its facts living on the instance records that own them. The gate reads names, not semantics: aggregation names are checked on `outputs` only, because in a `spec` an aggregate name can be legitimate intent; a derivable value under a neutral name is the reviewer's derivability question, not the gate's. |
+
+38. **The managed surface is a control plane, not a DCIM — and observed inventory is opt-in,
+    never authored.** UDLM/DCM is the system-of-record **only for the resources whose lifecycle
+    it owns**; it is not a hardware-component inventory authority. Component-level observation
+    enters solely through `classification: substrate | ancillary` (default `substrate`): an
+    **ancillary** type is **observe-only** (valid solely as Discovered/Realized records — never
+    on the Intent/catalog authoring surface), **structurally subordinate** (every instance
+    `contained_by` a substrate resource — a checkable invariant), observed-provenance-bearing,
+    and **policy-readable, never authored**. Optionality reuses existing mechanisms: a profile
+    includes or omits the ancillary set, a provider declares inventory as a capability,
+    conformance treats `ancillary` as an optional non-Tier-1 tier, and a non-implementing peer
+    ignores them (must-ignore-unknown). The substrate/ancillary line: control-plane-**actionable**
+    components (BMC, NetworkInterface, BiosProfile) are substrate; observe-only components
+    (Processor, StorageDevice, GraphicsProcessor) are ancillary. *The `classification` schema
+    carrier is pending — the invariant binds authoring now.*
+
+39. **Required cardinality states universality.** A relationship or field is declared `1..x`
+    **only when the requirement is universal to the type** — true for every provider and every
+    organization. A requirement that is provider- or org-variable is declared permissively
+    (`0..1` / `0..n`); the actual requirement is the provider's (capability declaration,
+    naturalization) or the organization's (policy) to state. UDLM carries the comparable shape;
+    it never bakes one party's requirement into the shared type.
+
+40. **A provider states its offer on its Provider Class — and that offer IS the consumer's option
+    list.** §39 says the actual requirement is the provider's to state; this says where and how.
+    Two declarations on the same element set: **what it REQUIRES** is an element it adds marked
+    `optional: false`; **what it SUPPORTS** is `supports` on the element — a list of clauses whose
+    union is the offer, each carrying discrete `values`, a `min`/`max` range (optionally with
+    `step`), or both, and optionally a `when` scoping the clause to other selections (that is how a
+    support *matrix* is expressed).
+
+    `schema` says what shape is **valid** and stays portable; `supports` says what is **offered
+    here**. The offer MUST narrow what the schema permits and MUST NOT exceed it, and a child
+    Class's clauses MUST be contained in its parent's — a widened offer is the same defect as a
+    widened enum (`tests/check_class_liskov.py`).
+
+    The matrix is declared as **data**, never as JSON Schema `if`/`then`: containment over declared
+    clauses is decidable, containment over conditional schema logic is not, so a conditional would
+    validate as JSON Schema while being ungated for subtyping.
+
+    **Do not restate the offer as a consumer-facing option list.** It is the same declaration read
+    from the other side — an offer to the provider, a menu to the consumer — and a second copy is a
+    §37 derivability violation that will drift. A request is this document with each range collapsed
+    to one selected value (or nothing, where optional); layers and policies perform the collapse.
+
+41. **UDLM ships no defaults — a base or type class states what is VALID, never what is CHOSEN.**
+    A `default` in a portable type is one organisation's opinion delivered to every consumer of that
+    type, and it arrives with **no provenance**: nothing records who chose it, and nothing can tell
+    an intended value from an inherited one.
+
+    The mechanism for defaults already exists and is strictly better. A `base`/`core` **layer**
+    contributes values to the assembled payload and **every field records the layer uuid that set
+    it**; a **profile** carries `settings`. A layer-supplied default is therefore attributable, and
+    policy can override it traceably. An opinionated implementation ships a layer — that is exactly
+    the right place for an opinion.
+
+    A **provider** class is exempt: a provider IS an opinionated implementation, and stating what it
+    does when unasked is its job. Enforced by `tests/check_no_shipped_defaults.py` (NDF-001).
+
+42. **Facilitate, do not dictate — how much of a resource to manage is the ORGANIZATION's and the
+    PROVIDER's decision, never UDLM's.** This is the mission stated as a rule, and it is the test to
+    apply when a rule feels like it is about to prescribe: UDLM does not set the depth boundary. It
+    carries the data whatever depth is chosen, and makes the choice attributable.
+
+    Read the neighbouring rules as instances of it — §39 (the requirement is the provider's to
+    state), §40 (the provider declares its own offer), §41 (no shipped defaults; an opinion belongs
+    in a layer where it carries provenance). Each removes a decision from UDLM and gives it to the
+    party who owns it, with a mechanism to express it and a record of who did.
+
+    - A **provider** states what it requires to realize a request, and the range of values it
+      supports, on its Provider Class (§40). Depth it does not need, it does not declare.
+    - An **organization** states how much it wants to manage through **layers, policies, and
+      profiles** — the same mechanism that supplies defaults (§41), and for the same reason: the
+      value records which layer set it, so the decision is attributable and policy can override it
+      traceably.
+    - **UDLM** provides the shapes and the transport. A portable type carries what a resource IS,
+      so that any provider can express what it needs and any organization can express how much it
+      manages. It does not ration that on either party's behalf.
+
+    **What UDLM must avoid is a different thing: becoming the front end for a platform.** A portable
+    type that mirrors one platform's configuration surface inherits that platform's API, release
+    cadence, and semantics — T9 inverted (the substrate never translates into a provider's native
+    spec). The guard is not a depth limit; it is §35 (model the fact, never the mechanism) and §17
+    (no provider-specific data in the portable spec). Provider-specific depth belongs on a Provider
+    Class, where it is scoped and its portability position is explicit — not on the portable type,
+    where it would be everyone's.
+
+    **The boundary is on the AUTHORING surface, not on visibility.** Not modelling a runtime setting
+    as portable intent does not make it invisible: it returns as realized state and typed outputs,
+    observed with provenance. *Not authored* is not *not known*.
+
+## Design principles (SHOULD)
+- **Minimal core, extensible at the edges** — don't over-model; add types via schema-sharing.
+- **Decouple the model from any runtime/controller** — the model outlives the engine that realizes it.
+- **Typed outputs are the only cross-entity binding surface** (E2); flag `sensitive` outputs.
+- **Profiles narrow, never widen** the base contract (E1).
+- **Field-level provenance** — every assembled field records the layer/policy that set it (E4).
+- **Reproducible** — spec + inputs deterministically yields the same Requested/effective state.
+- **One concept per field**; cross-field/conditional constraints expressed **declaratively** in JSON
+  Schema (`if`/`then`, `dependentSchemas`, `enum`), never an embedded expression language. Cross-entity
+  data flow is a declarative typed binding (`target_field` → output); any real transformation/computation
+  is **Policy**, applied by DCM — never in the spec (T2/T4).
+- **Right altitude — model the contract, not the implementation or product surface.** A type/taxonomy
+  captures the *concept and contract* (what a resource is, what it guarantees), never product/UI/impl
+  detail (specific screens, feature lists, internal mechanics). Such detail belongs in specs/product
+  docs and is referenced, not inlined. (Surfaced repeatedly in downstream review — e.g. enumerated UI
+  surfaces, "document every field of this object," over-modeled internals.) Sibling of *minimal core*.
+- **Simple common case; complexity is opt-in.** The common operation MUST be simple to declare — a
+  consumer should not author elaborate structure for the ordinary path. Advanced/edge capability is
+  *additive and optional*, never a tax on the default. (If "no admin would write this YAML," the altitude
+  or the default is wrong.)
+- **Cross-cutting mechanisms are consumer-neutral.** A shared mechanism (events, the four-state
+  lifecycle, provenance, audit) serves *any* subscriber/consumer and is **never coupled to one engine or
+  component** — e.g. lifecycle events route to all subscribers, not only the policy engine. (Pairs with
+  whole-system reuse.)
+- **Don't redefine a solved standard (active review gate, T5).** Before defining or redefining vocabulary
+  or a concept — versioning, auth/identity, DR objectives (RTO/RPO), health probes, etc. — check for a
+  credible external standard and **adopt it by reference or justify why not** (§22–23). Re-expressing a
+  solved standard as bespoke vocabulary is a review finding, not a default.
+- **Claims match the schema (reinforces §4).** A validation/typing *claim* MUST be backed by an actual
+  typed schema — no open/untyped maps where the contract asserts "all fields validated." An untyped
+  escape hatch that contradicts a stated guarantee is a defect.
+
+## Candidate / deferred data points
+
+Fields that were considered but are deliberately **not** in the meta-schema yet — recorded so the
+rationale isn't lost or re-litigated. Default to **not** adding: a field earns inclusion only when there
+is a clear need/value **and** it is not cleanly derivable from what already exists (minimal-core, §
+Design principles; don't denormalize derivable facts).
+
+| Candidate | Where it would live | Status | Why deferred · inclusion trigger |
+|---|---|---|---|
+| `ownership_model` (`whole-allocation` \| `allocation` \| `shareable`) | resource type spec | **Deferred** (2026-06-27) | Would be a policy anchor for decommission-safety / cost-attribution / placement (`docs/spec/foundations/ownership-sharing-allocation.md`). Deferred because: every current type is `whole-allocation` (no discrimination yet), the pattern is largely **derivable** from pool/stake relationships (denormalization → drift risk), and it may be **instance-level** for types realizable multiple ways (static vs pooled IP). **Add when** the first non-whole-allocation type is authored (a pool → `allocation`, or a declared-shareable resource), as the *authoritative declaration the relationships conform to* — not a derived copy. |
+| `stability` (`experimental` \| `stable`) | resource type spec | **Deferred** (2026-06-27) | An explicit per-type maturity marker, separate from lifecycle `status` (`active`/`deprecated`/`retired`). Deferred because **maturity is already carried by the version** (`0.x` pre-stable → `1.0` stable, K8s-style — see VERSIONING.md "Lifecycle vs. maturity"), so a per-type field is redundant while the whole spec is `0.x`. **Add when** per-type maturity must differ from the global `0.x/1.0` (e.g. one type is battle-tested while the spec is still pre-1.0). The review stage (`developing`/`proposed`) is a governance-workflow concern, never a `status`/`stability` value. |
+
+---
+_E1–E5 reference the enhancement opportunities surfaced from dcm-project/enhancements#55
+(constraint profiles, typed outputs, conditional constraints, layered-overlay provenance,
+instance↔version pinning). This rubric will tighten as the standards survey + OSAC research land._
