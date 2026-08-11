@@ -14,7 +14,7 @@ behind the first one. That was too much to ask anyone to review.
 
 | | |
 |---|---|
-| **1. Foundation** (this PR) | the meta-schemas everything else validates against |
+| **1. Foundation** | the meta-schemas everything else validates against |
 | **2. VM lifecycle classes** | compute · network · address pool · storage class · namespace · volume |
 | **3. The flow** | how the data moves, and where each piece comes from |
 
@@ -27,9 +27,10 @@ moves up.
 2. `registry/class.schema.json` — the authoring surface. A type is defined as a **Class** at one of
    three scopes: Base (portable across a category), Type (portable across providers), Provider
    (provider-bound). Scope IS portability.
-3. `registry/common-elements.md` — the canonical shared shapes (`Quantity`, `Identity`, timestamps),
-   so two types never describe the same thing differently.
-4. `registry/realized-entity.schema.json` — what an instance looks like once it exists.
+3. `registry/classes/` — the classes themselves, mirroring the hierarchy as directories.
+4. `registry/generated/` — the compiled flat specs. **Never authored** — a generator emits them from
+   the classes, and CI fails if they drift.
+5. `registry/realized-entity.schema.json` — what an instance looks like once it exists.
 
 ## What review is most useful
 
